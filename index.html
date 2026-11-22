@@ -30,16 +30,19 @@
     <button class="prod" data-prod="ftle"><span class="ico">FSLE</span><span>Fronts</span></button>
     <button class="prod" data-prod="wx"><span class="ico">&#9729;</span><span>Weather</span></button>
     <button class="prod" data-prod="bottom"><span class="ico">&#9650;</span><span>Bottom</span></button>
+    <button class="prod" data-prod="ana"><span class="ico">AN</span><span>Analysis</span></button>
     <button class="prod hot" data-prod="fish"><span class="ico">&#9733;</span><span>Where to fish</span></button>
   </div>
   <div class="sep"></div>
-  <button id="btnPick" class="tool"><span class="ico">&#9638;</span><span>Charts</span></button>
   <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
   <button id="btnWpts" class="tool"><span class="ico">&#9670;</span><span>Spots</span></button>
 </nav>
 
 <!-- Date strip -->
-<select id="zone" aria-label="Jump to a fishing zone"><option value="">Jump to…</option></select>
+<div id="topLeft">
+  <select id="zone" aria-label="Jump to a fishing zone"><option value="">Jump to…</option></select>
+  <select id="homeTop" aria-label="Home port" title="Home port: range, bearing and the run limit are measured from here"></select>
+</div>
 
 <div id="datebar">
   <button id="dPrev" aria-label="Back">&#9664;</button>
@@ -47,6 +50,7 @@
   <input id="datePick" type="date" aria-label="Pick a date" tabindex="-1">
   <button id="dNext" aria-label="Forward">&#9654;</button>
   <button id="dLatest" class="ghost">Latest</button>
+  <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">All charts &#9662;</button>
 </div>
 
 <div id="wxMode" hidden><button data-m="wind">Wind</button><button data-m="waves">Waves</button></div>
@@ -75,6 +79,7 @@
   <label><input type="checkbox" data-ov="cur"> Currents</label>
   <label><input type="checkbox" data-ov="relief"> Bottom relief shading</label>
   <label><input type="checkbox" data-ov="depth"> Depth lines (fathoms)</label>
+  <label><input type="checkbox" data-ov="spots"> Fishing spots + artificial reefs</label>
   <label><input type="checkbox" data-ov="places"> Place names (canyons, banks, capes, towns)</label>
   <label><input type="checkbox" data-ov="wrecks"> Wrecks, fish havens, obstructions</label>
   <label><input type="checkbox" data-ov="buoys"> Live buoys (NDBC)</label>
@@ -115,6 +120,13 @@
   <ol id="spotList"></ol>
   <h3 id="fishTimesHdr">Best times</h3>
   <div id="fishTimes"></div>
+</section>
+
+<!-- Ocean analysis write-up -->
+<section id="anaPanel" class="panel side" hidden>
+  <h3>Ocean analysis <button id="anaClose" class="x" aria-label="Hide write-up (outlines stay on the chart)" title="Hide write-up (outlines stay on the chart)">&times;</button></h3>
+  <div id="anaBody"></div>
+  <div class="row"><button id="anaCopy">Copy write-up</button></div>
 </section>
 
 <!-- Measure bar -->

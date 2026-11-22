@@ -1,0 +1,102 @@
+name,lat,lon,loran_td,area,type,source_url,confidence
+The Point,35.54767,-74.83917,,Oregon Inlet/Hatteras NC,canyon/shelf edge,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Tuna Hole,35.62233,-74.84417,,Oregon Inlet/Hatteras NC,hole,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Old Green Line,35.27408,-74.97462,,Oregon Inlet/Hatteras NC,shelf edge,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+486 Hump,35.93733,-74.72667,,Oregon Inlet/Hatteras NC,hump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Bad Rock,35.55667,-75.29833,,Oregon Inlet/Hatteras NC,bottom spot,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Rock Pile (Hatteras/Diamond Shoals),34.86333,-75.50000,,Oregon Inlet/Hatteras NC,rock/ledge,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Diamond Shoals Light Tower (Diamond Tower),35.15122,-75.29910,,Oregon Inlet/Hatteras NC,tower,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,high
+Gulf Buoy,35.78662,-75.09468,,Oregon Inlet/Hatteras NC,buoy,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Charlie Buoy,35.95000,-75.26667,,Oregon Inlet/Hatteras NC,buoy,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Bravo Buoy,36.06495,-74.98280,,Oregon Inlet/Hatteras NC,buoy,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Alpha Buoy South,36.22668,-75.24997,,Oregon Inlet/Hatteras NC,buoy,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+OI Buoy (Oregon Inlet sea buoy),35.81033,-75.51047,,Oregon Inlet/Hatteras NC,buoy,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Triple Zeros (off Oregon Inlet/VA line),36.25000,-74.78333,,Virginia Beach/VA-NC line,shelf edge,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Tarheel,36.25000,-74.64167,,Virginia Beach/VA-NC line,deep spot,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+20 Fm Lump,36.26667,-74.94583,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+"The Cigar (VA/NC, near ODAS 44014)",36.55568,-74.90657,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+The Elevens,36.55000,-75.29167,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+SE Lumps,36.60833,-75.45833,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Bluefish Alley,36.62500,-75.50000,,Virginia Beach/VA-NC line,shoal,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Hot Dog (Virginia Beach),36.74167,-75.29167,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Fish Hook,36.79167,-75.51167,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Spring Chicken,36.85417,-75.19150,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+21 Fm Finger,36.88333,-75.12667,,Virginia Beach/VA-NC line,finger,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+22 Fm Finger,36.86000,-74.99000,,Virginia Beach/VA-NC line,finger,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Wayne's World (north point),37.07500,-74.88500,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Wayne's World (south point),36.90708,-74.91167,,Virginia Beach/VA-NC line,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Norfolk Canyon 100 Fm Tip,37.09167,-74.75000,,Virginia Beach/VA-NC line,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Norfolk Canyon 30 Fm Hump,37.06667,-74.84000,,Virginia Beach/VA-NC line,hump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+The Hook (Norfolk Canyon),37.26167,-74.63667,,Virginia Beach/VA-NC line,canyon edge,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Ham Bone / 26 Mile Hill (VA),37.24963,-75.19210,,Eastern Shore VA,hill,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+20 Fm Finger (VA),37.34000,-74.95833,,Eastern Shore VA,finger,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+21 Mile Hill,37.43117,-75.20100,,Eastern Shore VA,hill,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Washington Canyon 100 Fm Tip,37.47845,-74.50943,,Eastern Shore VA,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Lumpy Bottom,37.48167,-74.90000,,Eastern Shore VA,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Sam's Hill,37.49833,-74.96833,,Eastern Shore VA,hill,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+The Hill,37.52167,-75.36683,,Eastern Shore VA,hill,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Little 20 Fm Finger,37.61500,-74.89833,,Eastern Shore VA,finger,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Parking Lot,37.69333,-74.90000,,Eastern Shore VA,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Triple 0's (South Poormans Canyon),37.74750,-74.18267,,Eastern Shore VA,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Poormans Canyon,37.87333,-74.10833,,Ocean City MD/DE,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Poormans Canyon Tip,37.87517,-74.10320,,Ocean City MD/DE,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Jack Spot,38.07667,-74.78333,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Jack Spot (alt source; ~1.6 nm from Segull),38.08667,-74.75167,,Ocean City MD/DE,lump,https://fishmasters.com/jacks-spot-gps-coordinates,low
+Hot Dog (Ocean City),38.11472,-74.27805,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+20 Fm Fingers,38.16667,-74.64167,,Ocean City MD/DE,finger,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Hambone (Ocean City),38.20000,-74.41667,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+South Paw,38.21667,-74.53333,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Chickenbone,38.23667,-74.44317,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Massey's Canyon,38.32917,-74.44167,,Ocean City MD/DE,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Massey's Canyon (CONFLICT; ~20 nm from Segull),38.54850,-74.73600,,Ocean City MD/DE,canyon,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,low
+Tea Cup,38.34167,-74.20000,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+19 Fm Lump,38.50000,-74.30000,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Elephant Trunk,38.54817,-74.07733,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+East Lump,38.79383,-74.47550,,Ocean City MD/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Baltimore Canyon Tip,38.24240,-73.84413,,Ocean City MD/DE,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+Wilmington Canyon Tip,38.49855,-73.49103,,Ocean City MD/DE,canyon,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,medium
+The Cigar (Cape May/DE),38.90450,-74.13888,,Cape May NJ/DE,lump,https://www.thefisherman.com/wp-content/uploads/2021/10/CMCH20.pdf,high
+28 Mile Wreck,39.00658,-74.08662,,South/Central NJ,wreck,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+Sea Isle Ridge,38.98857,-74.42968,,South/Central NJ,ridge/lump,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+Lemke's Canyon,39.04425,-73.69298,,South/Central NJ,canyon,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+Barnegat Ridge South,39.70340,-73.79918,,South/Central NJ,ridge/lump,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+Barnegat Ridge North,39.70300,-73.80650,,South/Central NJ,ridge/lump,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+Seaside Lump,39.92642,-73.91077,,South/Central NJ,ridge/lump,https://www.thefisherman.com/article/inshore-tuna-south-jersey-checklist/,medium
+AR-130,36.00321,-75.53000,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-140,35.94569,-75.52968,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-145,35.90029,-75.39805,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-160 Oregon Inlet Reef,35.73147,-75.44618,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-220,35.13529,-75.67722,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-225,35.11251,-75.65388,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-230 Mr. J.C. Reef,35.10222,-75.71555,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-250,34.94834,-75.91445,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-255,34.92472,-75.96529,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-285 George Summerlin Reef,34.55639,-76.43917,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-300 Hardie's Reef,34.30862,-76.40222,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-302 Yancey,34.17109,-76.22839,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-305 Carteret County Sportfishing Association Reef,34.27806,-76.64417,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-315 Atlantic Beach Reef,34.67222,-76.74445,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-320 Clifton Moss Reef,34.65889,-76.80695,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-330 Howard Chapin Reef,34.56057,-76.85445,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-340 J. Paul Tyndall Reef,34.57251,-76.97167,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-342 Onslow Bay Sport Fishing Club Reef,34.60921,-77.03649,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-345 Swansboro Rotary Club Reef,34.53834,-76.97445,,NC Cape Lookout,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+AR-165,35.69454,-75.43855,,NC Cape Hatteras,reef,https://services2.arcgis.com/kCu40SDxsCGcuUWO/ArcGIS/rest/services/DMF_ReefGuide/FeatureServer/0,high
+Triangle Reef (Triangle Wrecks),36.99667,-75.40833,,VA offshore,reef,https://webapps.mrc.virginia.gov/public/maps/artificial_reefs_list.php,high
+Tower Reef (Chesapeake Light Tower),36.90217,-75.72250,,VA offshore,reef,https://webapps.mrc.virginia.gov/public/maps/artificial_reefs_list.php,high
+Blackfish Bank Reef,37.83750,-75.24517,,VA offshore,reef,https://webapps.mrc.virginia.gov/public/maps/artificial_reefs_list.php,high
+Parramore Reef,37.53333,-75.43783,,VA offshore,reef,https://webapps.mrc.virginia.gov/public/maps/artificial_reefs_list.php,high
+Wachapreague Reef,37.55050,-75.54017,,VA offshore,reef,https://webapps.mrc.virginia.gov/public/maps/artificial_reefs_list.php,high
+Jackspot Reef (MD DNR polygon ref point),38.09052,-74.81207,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+African Queen Reef (MD DNR polygon ref point),38.15161,-74.95253,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+Great Eastern Reef (MD DNR polygon ref point),38.20834,-74.73163,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+New Bass Grounds Reef (MD DNR polygon ref point),38.29719,-74.91668,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+Great Gull Reef (MD DNR polygon ref point),38.26846,-75.02992,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+Isle of Wight Reef (MD DNR polygon ref point),38.38182,-74.97843,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+Del-Jersey-Land Inshore Reef (MD DNR polygon ref point),38.51607,-74.51222,,Ocean City MD,reef,https://mdgeodata.md.gov/imap/rest/services/Biota/MD_Finfish/FeatureServer/9,high
+USS Rankin,27.18886,-80.02385,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
+Kyle Conrad Memorial Reef,27.26619,-80.01652,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
+Frances Langford Memorial Reef,27.22022,-80.01743,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
+Ernst Reef,27.15658,-80.05520,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
+Donaldson Reef (one of several deployments),27.21263,-80.10236,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
+"Sirotkin Alpha (Sirotkin Reef, 185 ft)",27.21733,-80.00510,,Stuart/Martin Co FL,reef,https://gis.myfwc.com/mapping/rest/services/Open_Data/Artificial_Reef_Locations_in_Florida/MapServer/12,high
