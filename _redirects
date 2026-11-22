@@ -1,0 +1,6 @@
+# NOAA ERDDAP forwarding (same /erddap/<host>/... contract as server.py)
+/erddap/pfeg/*    https://coastwatch.pfeg.noaa.gov/erddap/:splat  200!
+/erddap/cw/*      https://coastwatch.noaa.gov/erddap/:splat       200!
+/erddap/upwell/*  https://upwell.pfeg.noaa.gov/erddap/:splat      200!
+/erddap/aoml/*    https://cwcgom.aoml.noaa.gov/erddap/:splat      200!
+/erddap/ndbc/*    https://www.ndbc.noaa.gov/:splat                200!

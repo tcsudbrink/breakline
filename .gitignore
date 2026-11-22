@@ -1,0 +1,7 @@
+live/
+site/
+__pycache__/
+.wrangler/
+node_modules/
+*.pyc
+.netlify/

@@ -1,0 +1,2095 @@
+/* Breakline v0.3 — RipCharts-style offshore chart on free NOAA/NASA data.
+ *
+ * Data is fetched for whatever part of the ocean is on screen (padded), at a resolution
+ * that matches the zoom. Rasters are image overlays; land, coast, depth lines, breaks,
+ * eddy rings, currents and the lat/lon or Loran grid are drawn on one screen-space canvas.
+ */
+(() => {
+'use strict';
+
+// ---------- Config ----------
+const WORLD = { s: -5, n: 50, w: -120, e: -50 };   // Gulf of Maine to the Caribbean + Gulf of Mexico + Pacific Central America
+// Fishing zones: quick-jump views, a default home port, and the boxes the hourly prefetch covers (keep in sync with prefetch.py)
+const ZONES = {
+  ne: { label: 'Northeast canyons', view: [[39.0, -74.5], [41.6, -68.5]], home: 'Montauk', box: 'east' },
+  ma: { label: 'Mid-Atlantic', view: [[35.6, -76.4], [39.6, -71.8]], home: 'Ocean City Inlet', box: 'east' },
+  se: { label: 'Carolinas & Georgia', view: [[31.0, -81.5], [36.0, -74.5]], home: 'Oregon Inlet', box: 'east' },
+  fl: { label: 'Florida & Bahamas', view: [[23.6, -83.2], [27.6, -76.0]], home: 'Palm Beach Inlet', box: 'fl' },
+  cr: { label: 'Costa Rica (Pacific)', view: [[7.6, -87.6], [11.2, -83.4]], home: 'Los Sueños', box: 'cr' },
+  crs: { label: 'Costa Rica offshore / Cocos', view: [[3.0, -90.5], [10.5, -82.5]], home: 'Quepos (Pez Vela)', box: 'cr' },
+  cabo: { label: 'Cabo San Lucas & Mag Bay', view: [[22.3, -113.2], [25.4, -108.9]], home: 'Cabo San Lucas', box: 'cabo' },
+  chiapas: { label: 'Chiapas (Puerto Chiapas)', view: [[13.0, -95.0], [15.8, -91.6]], home: 'Puerto Chiapas', box: 'chiapas' },
+  cancun: { label: 'Cancún, Isla Mujeres, Cozumel', view: [[19.9, -87.6], [22.3, -85.4]], home: 'Isla Mujeres', box: 'cancun' },
+  puntacana: { label: 'Punta Cana / Cap Cana (DR)', view: [[17.5, -69.8], [19.4, -67.4]], home: 'Cap Cana', box: 'puntacana' },
+  stlucia: { label: 'St. Lucia', view: [[13.3, -61.6], [14.5, -60.4]], home: 'Rodney Bay', box: 'stlucia' },
+};
+const PRE_BOX = {
+  east: { s: 23.0, n: 46.0, w: -98.0, e: -60.0 }, fl: { s: 20.0, n: 28.5, w: -85.0, e: -72.0 }, cr: { s: -1.0, n: 13.0, w: -96.0, e: -78.0 },
+  cabo: { s: 21.0, n: 27.5, w: -117.0, e: -106.5 }, chiapas: { s: 11.5, n: 17.5, w: -98.0, e: -90.0 }, cancun: { s: 18.5, n: 23.5, w: -89.0, e: -84.0 },
+  puntacana: { s: 16.5, n: 21.0, w: -71.5, e: -66.0 }, stlucia: { s: 11.5, n: 16.0, w: -63.0, e: -59.0 },
+};
+const FATHOM = 1.8288;
+const DEPTHS_MAJOR = [50, 100, 500, 1000];
+const DEPTHS_MINOR = [10, 20, 30, 40, 200, 300, 1500, 2000];
+
+// Inlet positions are approximate (within ~0.5 nm), for range/bearing only.
+const PORTS = [
+  ['Montauk', 41.073, -71.936], ['Shinnecock Inlet', 40.840, -72.477], ['Manasquan Inlet', 40.103, -74.030],
+  ['Barnegat Inlet', 39.760, -74.095], ['Absecon Inlet', 39.373, -74.410], ['Cape May Inlet', 38.947, -74.868],
+  ['Indian River Inlet', 38.610, -75.065], ['Ocean City Inlet', 38.324, -75.085], ['Chincoteague Inlet', 37.860, -75.400],
+  ['Wachapreague Inlet', 37.585, -75.600], ['Lynnhaven Inlet', 36.912, -76.090], ['Rudee Inlet', 36.830, -75.965],
+  ['Oregon Inlet', 35.770, -75.530], ['Hatteras Inlet', 35.198, -75.760], ['Beaufort Inlet', 34.690, -76.670],
+  ['Masonboro Inlet', 34.183, -77.815], ['Charleston', 32.750, -79.870], ['Port Canaveral', 28.410, -80.590],
+  ['Fort Pierce Inlet', 27.471, -80.290], ['Jupiter Inlet', 26.944, -80.070], ['Palm Beach Inlet', 26.772, -80.037],
+  ['Boca Raton Inlet', 26.336, -80.070], ['Port Everglades', 26.092, -80.110], ['Miami (Government Cut)', 25.763, -80.130],
+  ['Islamorada (Whale Harbor)', 24.940, -80.610], ['Marathon', 24.700, -81.100], ['Key West', 24.552, -81.800],
+  ['Bimini', 25.730, -79.300], ['Chub Cay', 25.410, -77.900], ['Nassau', 25.080, -77.350], ['Marsh Harbour', 26.545, -77.060],
+  ['Marina Papagayo', 10.640, -85.660], ['Flamingo', 10.430, -85.790], ['Los Sueños', 9.645, -84.670],
+  ['Quepos (Pez Vela)', 9.420, -84.170], ['Golfito', 8.620, -83.180],
+  ['Cabo San Lucas', 22.880, -109.910], ['San José del Cabo', 23.050, -109.680], ['Buena Vista (East Cape)', 23.650, -109.640],
+  ['Puerto San Carlos (Mag Bay)', 24.790, -112.110], ['Puerto Magdalena', 24.630, -112.150],
+  ['Puerto Chiapas', 14.700, -92.400],
+  ['Isla Mujeres', 21.250, -86.740], ['Cancún (Puerto Juárez)', 21.180, -86.800], ['Cozumel', 20.510, -86.950], ['Puerto Aventuras', 20.500, -87.230],
+  ['Cap Cana', 18.430, -68.400], ['Punta Cana (Marina)', 18.500, -68.370],
+  ['Rodney Bay', 14.080, -60.950], ['Marigot Bay', 13.970, -61.030], ['Vieux Fort', 13.730, -60.950],
+];
+
+const q = (s) => encodeURIComponent(s);
+const latRange = (w, asc) => (asc ? `(${w.s}):${w.stride}:(${w.n})` : `(${w.n}):${w.stride}:(${w.s})`);
+const lonRange = (w) => `(${w.w}):${w.stride}:(${w.e})`;
+const C2F = (c) => c * 9 / 5 + 32;
+
+// Satellite sources you can pick between (in the chart picker) for the two main charts.
+// gap: true = cloud-free analysis; false = real passes with cloud holes.
+const SST_C = (c) => (c > -2.5 && c < 40 ? C2F(c) : NaN), CHL = (x) => (x > 0 && x < 200 ? x : NaN);
+const SRC = {
+  sst: {
+    mur: { label: 'MUR cloud-free', who: 'NASA JPL, 1 km', host: 'pfeg', id: 'jplMURSST41', v: 'analysed_sst', res: 0.01, asc: true, gap: true, t: '09:00:00Z' },
+    geopolar: { label: 'Geo-polar blended', who: 'NOAA, 5 km', host: 'cw', id: 'noaacwBLENDEDsstDNDaily', v: 'analysed_sst', res: 0.05, asc: true, gap: true, t: '12:00:00Z' },
+    pmday: { label: 'Afternoon passes', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtPMDay', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
+    amday: { label: 'Morning passes', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtAMDay', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
+    pmnight: { label: 'Night passes (PM)', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtPMNight', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
+    amnight: { label: 'Night passes (AM)', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtAMNight', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
+  },
+  chl: {
+    cm_l4: { label: 'Gap-free (Copernicus)', who: 'EU Copernicus multi-sensor, 4 km, cloud-filled', cm: 'chl_l4', res: 0.0417, gap: true },
+    cm_l3: { label: 'Daily pass (Copernicus)', who: 'EU Copernicus multi-sensor, 4 km, clouds', cm: 'chl_l3', res: 0.0417 },
+    dineof: { label: 'Gap-filled + newest clear', who: 'NOAA VIIRS/OLCI, 2 km', host: 'cw', id: 'noaacwNPPN20S3ASCIDINEOF2kmDaily', v: 'chlor_a', alt: true, res: 0.02083, asc: false, gap: true, nrt: true, t: '12:00:00Z' },
+    s3a: { label: 'Sentinel-3A pass', who: 'Copernicus OLCI, 4 km, clouds', host: 'cw', id: 'noaacwS3AOLCIchlaDaily', v: 'chlor_a', alt: true, res: 0.0375, asc: false, t: '12:00:00Z' },
+    s3b: { label: 'Sentinel-3B pass', who: 'Copernicus OLCI, 4 km, clouds', host: 'cw', id: 'noaacwS3BOLCIchlaDaily', v: 'chlor_a', alt: true, res: 0.0375, asc: false, t: '12:00:00Z' },
+    n21: { label: 'NOAA-21 pass', who: 'NOAA VIIRS, 750 m, clouds', host: 'cw', id: 'noaacwN21VIIRSchlaSectorUSDaily', v: 'chlor_a', alt: true, res: 0.0075, asc: false, t: '18:00:00Z' },
+    n20: { label: 'NOAA-20 pass', who: 'NOAA VIIRS, 4 km, clouds', host: 'cw', id: 'noaacwN20VIIRSchlaDaily', v: 'chlor_a', alt: true, res: 0.0375, asc: false, t: '12:00:00Z' },
+  },
+};
+const srcUrl = (s, w, t) => `/erddap/${s.host}/griddap/${s.id}.asc?${q(`${s.v}[(${t || 'last'})]${s.alt ? '[(0.0)]' : ''}[${latRange(w, s.asc)}][${lonRange(w)}]`)}`;
+const curSrc = (fam) => SRC[fam][S.src[fam]] || Object.values(SRC[fam])[0];
+
+// Every product: where its data lives, native resolution, how many cells to aim for across the window
+const PRODUCTS = {
+  sst: {
+    get name() { return `Water temp · ${curSrc('sst').label}`; }, unit: '°F', step: 0.5, cells: 520, sst: true, family: 'sst',
+    get res() { return curSrc('sst').res; },
+    url: (w, t) => srcUrl(curSrc('sst'), w, t),
+    get v() { return curSrc('sst').v; }, conv: SST_C, fmt: (v) => v.toFixed(1) + '°F', day: (d) => `${d}T${curSrc('sst').t}`,
+    stops: ['#2a0a4a', '#3b1f9e', '#1d5fd6', '#14a6e0', '#1fd1b0', '#7ddc3a', '#f2e030', '#f8a22a', '#e9472a', '#b5122f', '#6e0a1e'],
+  },
+  goes: {
+    // Each frame is filled with the newest clear pixel from the previous 24 hours (clouds block GOES).
+    // Fetched as four 6-hour chunks (k = 0 newest) so no single request is slow.
+    name: 'Water temp (hourly, GOES-19)', unit: '°F', step: 0.5, res: 0.02, cells: 240, sst: true, hourly: true,
+    url: (w, t, k = 0) => {
+      const a = 6 * k + 5, b = 6 * k;
+      const tq = t ? `(${hourAdd(t, -a)}):1:(${hourAdd(t, -b)})` : `last-${a}:1:${b ? `last-${b}` : 'last'}`;
+      return `/erddap/aoml/griddap/goes19SSThourly.asc?${q(`sst[${tq}][${latRange(w, true)}][${lonRange(w)}]`)}`;
+    },
+    v: 'sst', conv: (c) => (c > -2.5 && c < 40 ? C2F(c) : NaN), fmt: (v) => v.toFixed(1) + '°F',
+    stops: ['#2a0a4a', '#3b1f9e', '#1d5fd6', '#14a6e0', '#1fd1b0', '#7ddc3a', '#f2e030', '#f8a22a', '#e9472a', '#b5122f', '#6e0a1e'],
+  },
+  chl: {
+    get name() { return `Chlorophyll · ${curSrc('chl').label}`; }, unit: 'mg/m³', step: 0.05, cells: 450, log: true, family: 'chl',
+    get res() { return curSrc('chl').res; },
+    url: (w, t) => srcUrl(curSrc('chl'), w, t),
+    get nrt() { return curSrc('chl').nrt ? (w, t0, t1) => `/erddap/cw/griddap/noaacwN20VIIRSchlaDaily.asc?${q(`chlor_a[(${t0}):1:(${t1})][(0.0)][${latRange({ ...w, stride: Math.max(1, Math.round(w.stride * 0.5556)) }, false)}][${lonRange({ ...w, stride: Math.max(1, Math.round(w.stride * 0.5556)) })}]`)}` : null; },
+    v: 'chlor_a', conv: CHL, fmt: (v) => (v < 1 ? v.toFixed(2) : v.toFixed(1)) + ' mg/m³', day: (d) => `${d}T${curSrc('chl').t}`,
+    stops: ['#160d4f', '#1b3fa8', '#1b7fcf', '#1fb3b8', '#35c47a', '#9bd83a', '#f0dc34', '#f39a2c', '#d8432a', '#8e1626'],
+  },
+  sss: {
+    name: 'Salinity', unit: 'PSU', step: 0.1, res: 0.083, cells: 360, cm: 'so',
+    url: (w, t) => `/erddap/cw/griddap/noaacwSMAPsssDaily.asc?${q(`sss[(${t || 'last'})][(0.0)][${latRange(w, true)}][${lonRange(w)}]`)}`,
+    v: 'sss', conv: (x) => (x > 20 && x < 42 ? x : NaN), fmt: (v) => `${v.toFixed(2)} PSU`, day: (d) => `${d}T12:00:00Z`,
+    stops: ['#3b2a1a', '#7a5a2b', '#b89a4e', '#d9d79a', '#9fd3c7', '#4fb0c6', '#2b7bba', '#1f4a8f', '#1a2766'],
+  },
+  cur: {
+    name: 'Currents (HF radar + satellite)', unit: 'kt', step: 0.1, res: 0.25, computed: true,
+    fmt: (v) => `${v.toFixed(2)} kt`,
+    stops: ['#0b1a2e', '#16345e', '#1f5f9a', '#2a93c4', '#4fc3c9', '#a6dd8a', '#f2e04a', '#f6a23a', '#e5533b', '#b3123a'],
+  },
+  fish: {
+    name: 'Where to fish (hot-spot score)', unit: '/100', step: 5, res: 0.01, computed: true,
+    fmt: (v) => `${Math.round(v)}/100`,
+    stops: ['#0b1622', '#1b2f52', '#3b3d8a', '#7b3f9e', '#c14f8a', '#f0745f', '#f9a54a', '#fbe36a'],
+  },
+  ssh: {
+    name: 'Sea surface height', unit: 'cm', step: 1, res: 0.125, cells: 360, diverging: true, cm: 'sla',
+    url: (w, t) => `/erddap/cw/griddap/noaacwBLENDEDsshDaily.asc?${q(`sla[(${t || 'last'})][${latRange(w, true)}][${lonRange(w)}]`)}`,
+    v: 'sla', conv: (m) => (Math.abs(m) < 1.5 ? m * 100 : NaN), fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(0) + ' cm', day: (d) => `${d}T12:00:00Z`,
+    stops: ['#1b2a8a', '#2f63c9', '#6fa8e6', '#c4def3', '#f2f2ee', '#f6c9a3', '#ea8a5a', '#cf4630', '#8c1520'],
+  },
+  mld: {
+    name: 'Mixed layer depth', unit: 'ft', step: 10, res: 0.083, cells: 360, cm: 'mld',
+    url: (w, t) => `/erddap/cw/griddap/noaacwOHC14na.asc?${q(`omld[(${t || 'last'})][${latRange(w, true)}][${lonRange(w)}]`)}`,
+    v: 'omld', conv: (m) => (m > 0 && m < 3000 ? m * 3.28084 : NaN), fmt: (v) => `${Math.round(v)} ft`, day: (d) => `${d}T12:00:00Z`,
+    stops: ['#fff7d6', '#fde08a', '#f6b04a', '#e8743b', '#c9443c', '#952a5a', '#5b1f6e', '#2b1650'],
+  },
+  ftle: {
+    name: 'Fronts (FSLE-style, from currents)', unit: '1/day', step: 0.02, res: 0.25, computed: true,
+    fmt: (v) => v.toFixed(2) + ' /day',
+    stops: ['#08111b', '#10263d', '#1d4a6b', '#3f7fa6', '#8fc3dc', '#e9f4f7', '#ffe38a', '#ffb13b'],
+  },
+  bottom: {
+    name: 'Bottom (shaded relief)', unit: 'fm', step: 10, computed: true, noLegendRange: true,
+    fmt: (v) => `${Math.round(v).toLocaleString()} fm`,
+    stops: ['#b9f0ec', '#6fd0dd', '#2f9cc6', '#1c64a2', '#123e73', '#0a2148'],
+  },
+};
+
+// ---------- State ----------
+const store = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem('breakline.' + k)) ?? d; } catch { return d; } },
+  set: (k, v) => localStorage.setItem('breakline.' + k, JSON.stringify(v)),
+};
+const S = {
+  prod: store.get('prod', 'sst'),
+  date: null, hour: null,         // null = latest
+  latest: null, latestHour: null,
+  data: {},                       // key -> grid (window-tagged)
+  range: {}, auto: true,
+  ov: { breaks: true, iso: false, rings: true, cur: false, relief: false, depth: true, ports: true, wrecks: true, buoys: true, places: true, ...store.get('ov', {}) },
+  src: { sst: 'mur', chl: 'cm_l4', ...store.get('src2', {}) },
+  species: store.get('species', 'yellowfin'), maxRun: store.get('maxRun', 90), fishDepth: store.get('fishDepth', [null, null]),
+  grid: store.get('grid', 'll'), tdPair: store.get('tdPair', 'XY'), tdOff: store.get('tdOff', [0, 0]),
+  brk: store.get('brk2', 0.3),   // °F per nm; MUR is smooth, so its strongest fronts run ~0.5-1
+  home: store.get('home', 'Ocean City Inlet'),
+  wpts: store.get('wpts', []),
+  geo: { land: [], depth: [], iso: [], breaks: [], rings: [], td: [] },
+};
+if (!PRODUCTS[S.prod]) S.prod = 'sst';
+
+// ---------- Helpers ----------
+const $ = (id) => document.getElementById(id);
+const status = (msg, err) => { const el = $('status'); el.hidden = !msg; el.textContent = msg || ''; el.classList.toggle('err', !!err); };
+const merc = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+const imerc = (y) => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
+const isoDate = (d) => d.toISOString().slice(0, 10);
+const addDays = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return isoDate(d); };
+function hourAdd(iso, h) { const d = new Date(iso); d.setUTCHours(d.getUTCHours() + h); return d.toISOString().slice(0, 13) + ':00:00Z'; }
+const nice = (s) => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+const niceHour = (iso) => new Date(iso).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', timeZone: 'America/New_York' }) + ' ET';
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function ddm(v, pos, neg) {
+  const h = v >= 0 ? pos : neg; v = Math.abs(v);
+  let d = Math.floor(v), m = (v - d) * 60;
+  if (m >= 59.995) { d += 1; m = 0; }
+  return `${d}°${m.toFixed(2).padStart(5, '0')}'${h}`;
+}
+const fmtLL = (lat, lon) => `${ddm(lat, 'N', 'S')}  ${ddm(lon, 'E', 'W')}`;
+
+function rangeBearing(a, b) {
+  const R = 3440.065, r = Math.PI / 180;
+  const p1 = a[0] * r, p2 = b[0] * r, dp = (b[0] - a[0]) * r, dl = (b[1] - a[1]) * r;
+  const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  const d = 2 * R * Math.asin(Math.sqrt(h));
+  const y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return [d, (Math.atan2(y, x) / r + 360) % 360];
+}
+
+// Loran TDs with the user's calibration offsets
+const pair = () => [S.tdPair[0], S.tdPair[1]];
+function tds(lat, lon) {
+  const [a, b] = pair();
+  return [Loran.td(lat, lon, a) + (+S.tdOff[0] || 0), Loran.td(lat, lon, b) + (+S.tdOff[1] || 0)];
+}
+const fmtTd = (lat, lon) => { const [a, b] = tds(lat, lon); return `${a.toFixed(1)} / ${b.toFixed(1)}`; };
+// 9960 chain TDs only mean something off the US East Coast
+const inLoran = (lat, lon) => lat > 28 && lat < 47 && lon > -82 && lon < -62;
+
+// ---------- ERDDAP .asc ----------
+function parseAsc(text) {
+  const out = {}; let key = null;
+  for (const line of text.split('\n')) {
+    const h = line.match(/^([A-Za-z_]\w*\.[A-Za-z_]\w*)((?:\[\d+\])+)\s*$/);
+    if (h) { key = h[1]; out[key] = []; continue; }
+    if (!key) continue;
+    if (!line.trim()) { key = null; continue; }
+    const body = line.replace(/^(\[\d+\])+,\s*/, '');
+    for (const s of body.split(',')) out[key].push(s.trim() === '' ? NaN : parseFloat(s));
+  }
+  return out;
+}
+
+// Returns a grid with rows south->north. With `all`, also returns every time slice.
+function toGrid(sec, v, conv, all) {
+  const lat = sec[`${v}.latitude`], lon = sec[`${v}.longitude`], raw = sec[`${v}.${v}`], t = sec[`${v}.time`];
+  if (!lat || !lon || !raw) throw new Error('no data in that area');
+  const ny = lat.length, nx = lon.length, n = ny * nx, nt = Math.round(raw.length / n), flip = lat[0] > lat[ny - 1];
+  const slice = (k) => {
+    const vals = new Float32Array(n), off = k * n;
+    for (let j = 0; j < ny; j++) {
+      const src = flip ? ny - 1 - j : j;
+      for (let i = 0; i < nx; i++) { const x = raw[off + src * nx + i]; vals[j * nx + i] = conv ? conv(x) : x; }
+    }
+    return vals;
+  };
+  const la = flip ? lat.slice().reverse() : lat;
+  const g = {
+    nx, ny, lat0: la[0], dlat: ny > 1 ? (la[ny - 1] - la[0]) / (ny - 1) : 0.01, lon0: lon[0], dlon: nx > 1 ? (lon[nx - 1] - lon[0]) / (nx - 1) : 0.01,
+    v: slice(nt - 1), times: t ? t.map((s) => new Date(s * 1000).toISOString()) : [],
+  };
+  g.date = g.times.length ? g.times[g.times.length - 1].slice(0, 10) : null;
+  if (all) g.slices = Array.from({ length: nt }, (_, k) => slice(k));
+  return g;
+}
+
+function sample(g, lat, lon, vals) {
+  if (!g) return NaN;
+  const v = vals || g.v;
+  const fy = (lat - g.lat0) / g.dlat, fx = (lon - g.lon0) / g.dlon;
+  if (fx < -0.5 || fy < -0.5 || fx > g.nx - 0.5 || fy > g.ny - 0.5) return NaN;
+  const x0 = clamp(Math.floor(fx), 0, g.nx - 1), y0 = clamp(Math.floor(fy), 0, g.ny - 1);
+  const x1 = Math.min(x0 + 1, g.nx - 1), y1 = Math.min(y0 + 1, g.ny - 1);
+  const tx = clamp(fx - x0, 0, 1), ty = clamp(fy - y0, 0, 1);
+  const a = v[y0 * g.nx + x0], b = v[y0 * g.nx + x1], c = v[y1 * g.nx + x0], d = v[y1 * g.nx + x1];
+  let s = 0, w = 0, wt;
+  if (a === a) { wt = (1 - tx) * (1 - ty); s += a * wt; w += wt; }
+  if (b === b) { wt = tx * (1 - ty); s += b * wt; w += wt; }
+  if (c === c) { wt = (1 - tx) * ty; s += c * wt; w += wt; }
+  if (d === d) { wt = tx * ty; s += d * wt; w += wt; }
+  return w > 0.25 ? s / w : NaN;
+}
+
+// Faster/backup copies of the same NOAA dataset on another server (pfeg answers in ~1 s; coastwatch.noaa.gov is often slow or down)
+const MIRRORS = {
+  'cw/noaacwNPPN20S3ASCIDINEOF2kmDaily': ['pfeg/noaacwNPPN20S3ASCIDINEOF2kmDaily'],
+  'cw/noaacwN20VIIRSchlaDaily': ['pfeg/nesdisVHNnoaa20chlaDaily'],
+  'cw/noaacwBLENDEDsstDNDaily': ['pfeg/nesdisBLENDEDsstDNDaily'],
+};
+const HOST_NAME = { cw: 'NOAA CoastWatch (coastwatch.noaa.gov)', pfeg: 'NOAA CoastWatch West', aoml: 'NOAA AOML', ndbc: 'NDBC' };
+// Circuit breaker, per dataset: one that fails twice is skipped for 3 minutes so nothing else waits on it.
+// If 3 different datasets on the same server are down, the whole server is treated as down.
+const BREAK = {};
+const isDown = (k) => (BREAK[k]?.until || 0) > Date.now();
+const hostDown = (key) => isDown(key) || isDown(key.split('/')[0]);
+function hostFail(key) {
+  const s = (BREAK[key] ||= { n: 0, until: 0 }); s.n++;
+  if (s.n >= 2) { s.until = Date.now() + 3 * 60 * 1000; s.n = 0; }
+  const host = key.split('/')[0];
+  const downIds = Object.keys(BREAK).filter((k) => k.startsWith(host + '/') && isDown(k)).length;
+  if (downIds >= 3) BREAK[host] = { n: 0, until: Date.now() + 3 * 60 * 1000 };
+}
+const hostOk = (key) => { BREAK[key] = { n: 0, until: 0 }; BREAK[key.split('/')[0]] = { n: 0, until: 0 }; };
+
+async function fetchOnce(url, ms) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { signal: ac.signal }); } finally { clearTimeout(timer); }
+}
+async function getText(url) {
+  const m = url.match(/^\/erddap\/(\w+)\/griddap\/(\w+)(\..*)$/);
+  const cands = [url];
+  if (m && MIRRORS[`${m[1]}/${m[2]}`]) cands.unshift(...MIRRORS[`${m[1]}/${m[2]}`].map((x) => `/erddap/${x.split('/')[0]}/griddap/${x.split('/')[1]}${m[3]}`));
+  let last = null;
+  for (const u of cands) {
+    const parts = u.split('/'), name = parts[2], host = `${name}/${(parts[4] || parts[3] || '').split(/[.?]/)[0]}`;
+    if (hostDown(host)) { last = new Error(`${HOST_NAME[name] || name} is down right now`); continue; }
+    for (let i = 0; i < 2; i++) {
+      let r;
+      try { r = await fetchOnce(u, name === 'cw' || /nesdis/.test(host) ? 18000 : 25000); }
+      catch (e) { hostFail(host); last = new Error(`${HOST_NAME[name] || name} not responding`); break; }
+      if (r.ok) {
+        const t = await r.text();
+        // ERDDAP writes the lat/lon axes last, so a proxy that cuts a slow response short leaves them off
+        if (!t.includes('Dataset {') || /\.longitude\[\d+\]\s*\n[^\n]*\d/.test(t)) { hostOk(host); return t; }
+        last = new Error('response cut short (server slow)'); continue;
+      }
+      if (r.status === 404) { last = new Error('not published for that date/area'); break; }   // try the next copy
+      if (![502, 503, 504].includes(r.status)) { last = new Error(`${r.status}`); break; }
+      hostFail(host); last = new Error(`${HOST_NAME[name] || name} is ${r.status === 503 ? 'busy' : 'down'} right now`);
+      if (hostDown(host)) break;
+      await new Promise((z) => setTimeout(z, 1500));
+    }
+  }
+  throw last || new Error('NOAA server busy');
+}
+
+// ---------- Windows: fetch what is on screen, at a resolution that fits the zoom ----------
+function windowFor(res, cells, pad = 0.35) {
+  const b = map.getBounds().pad(pad), snap = res >= 0.25 ? 0.25 : 0.1;
+  const w = {
+    s: clamp(Math.floor(b.getSouth() / snap) * snap, WORLD.s, WORLD.n), n: clamp(Math.ceil(b.getNorth() / snap) * snap, WORLD.s, WORLD.n),
+    w: clamp(Math.floor(b.getWest() / snap) * snap, WORLD.w, WORLD.e), e: clamp(Math.ceil(b.getEast() / snap) * snap, WORLD.w, WORLD.e),
+  };
+  const span = Math.max(w.n - w.s, w.e - w.w);
+  w.stride = Math.max(1, Math.ceil(span / res / cells));
+  // round stride to a power-of-two-ish ladder so nearby zooms share the cache
+  const ladder = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+  w.stride = ladder.find((x) => x >= w.stride) || w.stride;
+  for (const k of ['s', 'n', 'w', 'e']) w[k] = +w[k].toFixed(2);
+  return w;
+}
+function covers(g, res, cells) {
+  if (!g?.win) return false;
+  const b = map.getBounds(), w = g.win, want = windowFor(res, cells, 0);
+  if (w.static && map.getZoom() >= 9) return false;     // zoomed in: swap the coarse built-in depth for full resolution
+  const inside = (b.getSouth() >= w.s || w.s <= WORLD.s) && (b.getNorth() <= w.n || w.n >= WORLD.n) &&
+    (b.getWest() >= w.w || w.w <= WORLD.w) && (b.getEast() <= w.e || w.e >= WORLD.e);
+  // not too coarse for this zoom, and not wastefully fine after zooming way out
+  if (w.static) return inside;
+  if (w.pre) return inside && map.getZoom() <= 8;       // prefetched snapshot: good until you zoom in past 8
+  return inside && w.stride <= Math.max(1, want.stride * 1.5) && w.stride * 4 >= want.stride;
+}
+
+// ---------- Contours ----------
+function contourRings(g, values, thresholds) {
+  const gen = d3.contours().size([g.nx, g.ny]).thresholds(thresholds);
+  return gen(values).map((c) => {
+    const rings = [];
+    for (const poly of c.coordinates) for (const ring of poly) {
+      rings.push(ring.map(([x, y]) => {
+        const edge = x <= 0.5 || y <= 0.5 || x >= g.nx - 0.5 || y >= g.ny - 0.5;
+        return [g.lat0 + (y - 0.5) * g.dlat, g.lon0 + (x - 0.5) * g.dlon, edge];
+      }));
+    }
+    return { value: c.value, rings };
+  });
+}
+
+function fillNaN(g, vals = g.v) {
+  const v = Float64Array.from(vals); const { nx, ny } = g;
+  let missing = true, pass = 0;
+  while (missing && pass++ < 80) {
+    missing = false; const nv = v.slice();
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const k = j * nx + i; if (v[k] === v[k]) continue;
+      let s = 0, n = 0;
+      if (i > 0 && v[k - 1] === v[k - 1]) { s += v[k - 1]; n++; }
+      if (i < nx - 1 && v[k + 1] === v[k + 1]) { s += v[k + 1]; n++; }
+      if (j > 0 && v[k - nx] === v[k - nx]) { s += v[k - nx]; n++; }
+      if (j < ny - 1 && v[k + nx] === v[k + nx]) { s += v[k + nx]; n++; }
+      if (n) nv[k] = s / n; else missing = true;
+    }
+    v.set(nv);
+  }
+  for (let k = 0; k < v.length; k++) if (v[k] !== v[k]) v[k] = 0;
+  return v;
+}
+
+// Upsample a coarse grid (bilinear) so 25 km fields contour into smooth rings
+function upsample(g, f) {
+  const nx = (g.nx - 1) * f + 1, ny = (g.ny - 1) * f + 1, v = new Float32Array(nx * ny);
+  const out = { nx, ny, lat0: g.lat0, lon0: g.lon0, dlat: g.dlat / f, dlon: g.dlon / f, v };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) v[j * nx + i] = sample(g, g.lat0 + j * out.dlat, g.lon0 + i * out.dlon);
+  return out;
+}
+
+// SST gradient in °F per nautical mile on a smoothed field, plus its direction (unit vector, in cells).
+// NaN where there's no water/data.
+function gradient(g) {
+  const { nx, ny } = g, n = nx * ny, R = 2;
+  let sm = Float32Array.from(g.v);
+  for (let pass = 0; pass < 2; pass++) {          // two box passes ~ gaussian
+    const nxt = new Float32Array(n).fill(NaN);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const k = j * nx + i; if (g.v[k] !== g.v[k]) continue;
+      let s = 0, c = 0;
+      for (let dj = -R; dj <= R; dj++) { const jj = j + dj; if (jj < 0 || jj >= ny) continue;
+        for (let di = -R; di <= R; di++) { const ii = i + di; if (ii < 0 || ii >= nx) continue; const x = sm[jj * nx + ii]; if (x === x) { s += x; c++; } } }
+      nxt[k] = s / c;
+    }
+    sm = nxt;
+  }
+  const mag = new Float32Array(n).fill(NaN), ux = new Float32Array(n), uy = new Float32Array(n);
+  for (let j = 1; j < ny - 1; j++) {
+    const lat = g.lat0 + j * g.dlat, dxn = g.dlon * 60 * Math.cos(lat * Math.PI / 180), dyn = g.dlat * 60;
+    for (let i = 1; i < nx - 1; i++) {
+      const k = j * nx + i, gx = (sm[k + 1] - sm[k - 1]) / (2 * dxn), gy = (sm[k + nx] - sm[k - nx]) / (2 * dyn);
+      const m = Math.hypot(gx, gy); if (m !== m) continue;
+      mag[k] = m;
+      // direction in grid cells (account for the cell aspect so "across the front" is right)
+      const cx = gx * dxn, cy = gy * dyn, cl = Math.hypot(cx, cy) || 1; ux[k] = cx / cl; uy[k] = cy / cl;
+    }
+  }
+  return { ...g, v: mag, ux, uy };
+}
+
+// Is this point on the crest of the gradient, i.e. the middle of the front, not its shoulders?
+function onCrest(gr, lat, lon, m) {
+  const fx = Math.round((lon - gr.lon0) / gr.dlon), fy = Math.round((lat - gr.lat0) / gr.dlat);
+  if (fx < 1 || fy < 1 || fx >= gr.nx - 1 || fy >= gr.ny - 1) return false;
+  const k = fy * gr.nx + fx, ox = gr.ux[k] * 1.5, oy = gr.uy[k] * 1.5;
+  const a = sample(gr, lat + oy * gr.dlat, lon + ox * gr.dlon), b = sample(gr, lat - oy * gr.dlat, lon - ox * gr.dlon);
+  return !(a > m * 1.04) && !(b > m * 1.04);
+}
+
+// ---------- Colors ----------
+function hex(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+function lut(stops) {
+  const c = stops.map(hex), out = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255 * (c.length - 1), k = Math.min(c.length - 2, Math.floor(t)), f = t - k;
+    for (let ch = 0; ch < 3; ch++) out[i * 3 + ch] = Math.round(c[k][ch] + (c[k + 1][ch] - c[k][ch]) * f);
+  }
+  return out;
+}
+const LUTS = Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, lut(p.stops)]));
+const tOf = (p, v, [lo, hi]) => (p.log ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : (v - lo) / (hi - lo));
+const vOf = (p, t, [lo, hi]) => (p.log ? 10 ** (Math.log10(lo) + t * (Math.log10(hi) - Math.log10(lo))) : lo + t * (hi - lo));
+
+// ---------- Map ----------
+const map = L.map('map', {
+  zoomControl: true, attributionControl: true, minZoom: 4, maxZoom: 13, zoomSnap: 0.5, wheelPxPerZoomLevel: 90,
+  maxBounds: [[WORLD.s, WORLD.w], [WORLD.n, WORLD.e]], maxBoundsViscosity: 0.8, preferCanvas: true,
+}).setView(store.get('view', [38.1, -74.3]), store.get('zoom', 7.5));
+map.zoomControl.setPosition('topright');
+map.attributionControl.setPrefix('').addAttribution('NASA JPL MUR, NOAA CoastWatch/AOML/STAR/ENC, NOAA ETOPO 2022, EU Copernicus Marine, place names © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Not for navigation.');
+map.createPane('data').style.zIndex = 300;
+const reliefPane = map.createPane('relief'); reliefPane.style.zIndex = 320; reliefPane.style.mixBlendMode = 'multiply'; reliefPane.style.pointerEvents = 'none';
+const chartPane = map.createPane('chart'); chartPane.style.zIndex = 450; chartPane.style.pointerEvents = 'none';
+let dataLayer = null, reliefLayer = null;
+
+const Chart = L.Layer.extend({
+  onAdd(m) {
+    this._c = L.DomUtil.create('canvas', '', m.getPane('chart'));
+    m.on('moveend zoomend resize viewreset', this.draw, this);
+    m.on('zoomstart', () => { this._c.style.opacity = 0; });
+    this.draw();
+  },
+  draw() {
+    const size = map.getSize(), dpr = window.devicePixelRatio || 1, c = this._c;
+    L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0, 0]));
+    c.width = size.x * dpr; c.height = size.y * dpr; c.style.width = size.x + 'px'; c.style.height = size.y + 'px';
+    c.style.opacity = 1;
+    const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawChart(ctx, size);
+  },
+});
+function project(lat, lon) { const p = map.latLngToContainerPoint([lat, lon]); return [p.x, p.y]; }
+let chart;   // created at the bottom, once everything it draws is defined
+
+function strokeRings(ctx, rings, minLen = 0) {
+  const spots = [];
+  for (const ring of rings) {
+    ctx.beginPath(); let len = 0, prev = null; const pts = [];
+    for (let i = 0; i < ring.length; i++) {
+      const [la, lo, edge] = ring[i], p = project(la, lo);
+      if (i === 0 || (edge && ring[i - 1][2])) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      if (prev) len += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+      pts.push([p[0], p[1], len, edge]); prev = p;
+    }
+    ctx.stroke();
+    if (len > minLen) spots.push(pts);
+  }
+  return spots;
+}
+function fillRings(ctx, rings) {
+  ctx.beginPath();
+  for (const ring of rings) ring.forEach(([la, lo], i) => { const p = project(la, lo); i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); });
+  ctx.fill('evenodd');
+}
+function haloText(ctx, txt, x, y, fg = '#111', bg = 'rgba(255,255,255,.9)') {
+  ctx.lineWidth = 3.5; ctx.strokeStyle = bg; ctx.strokeText(txt, x, y); ctx.fillStyle = fg; ctx.fillText(txt, x, y);
+}
+function placeLabels(ctx, spots, txt, boxes, size, every = 260, fg, bg) {
+  const w = ctx.measureText(txt).width + 6, h = 14;
+  for (const pts of spots) {
+    for (let target = every / 2; target < pts[pts.length - 1][2]; target += every) {
+      const p = pts.find((q2) => q2[2] >= target);
+      if (!p || p[3]) continue;
+      const [x, y] = p;
+      if (x < 80 || y < 80 || x > size.x - 40 || y > size.y - 110) continue;
+      const b = [x - w / 2, y - h / 2, x + w / 2, y + h / 2];
+      if (boxes.some((o) => !(b[2] < o[0] || b[0] > o[2] || b[3] < o[1] || b[1] > o[3]))) continue;
+      boxes.push(b); haloText(ctx, txt, x, y, fg, bg);
+    }
+  }
+}
+
+function drawChart(ctx, size) {
+  const z = map.getZoom(), boxes = [];
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const sstProd = PRODUCTS[S.prod].sst;
+
+  if (S.ov.iso && sstProd) {
+    for (const c of S.geo.iso) {
+      if (Math.abs(c.value - Math.round(c.value)) > 1e-6) continue;
+      const major = c.value % 5 === 0;
+      ctx.strokeStyle = major ? 'rgba(0,0,0,.5)' : 'rgba(0,0,0,.28)'; ctx.lineWidth = major ? 1 : 0.7;
+      const spots = strokeRings(ctx, c.rings, 220);
+      if (major) { ctx.font = '600 10.5px system-ui, sans-serif'; placeLabels(ctx, spots, `${c.value}°`, boxes, size, 600); }
+    }
+  }
+
+  // Altimetry rings: solid = high (warm eddy), dashed = low (cold eddy)
+  if (S.ov.rings && S.geo.rings.length) {
+    const step = z >= 8 ? 5 : 10;
+    for (const c of S.geo.rings) {
+      if (c.value % step !== 0) continue;
+      const strong = c.value % 20 === 0;
+      ctx.setLineDash(c.value < 0 ? [7, 5] : []);
+      ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = strong ? 3.4 : 2.6; strokeRings(ctx, c.rings);
+      ctx.strokeStyle = c.value === 0 ? 'rgba(20,20,20,.8)' : c.value > 0 ? '#7a0f1c' : '#0f2a7a'; ctx.lineWidth = strong ? 1.6 : 1;
+      const spots = strokeRings(ctx, c.rings, 160);
+      ctx.setLineDash([]);
+      ctx.font = '700 10.5px system-ui, sans-serif';
+      placeLabels(ctx, spots, `${c.value > 0 ? '+' : ''}${c.value}`, boxes, size, 340, c.value > 0 ? '#7a0f1c' : '#0f2a7a');
+    }
+  }
+
+  // Temperature breaks: isotherm segments where the gradient is strong
+  if (S.ov.breaks && sstProd && S.geo.breaks.length) {
+    for (const [w, segs] of [[1, S.geo.breaks.filter((s) => s.k === 1)], [2, S.geo.breaks.filter((s) => s.k === 2)]]) {
+      for (const [col, lw] of [['rgba(0,0,0,.9)', w === 2 ? 5.5 : 4.4], ['#fff', w === 2 ? 2.8 : 1.9]]) {
+        ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
+        for (const s of segs) {
+          const p0 = project(s.a[0], s.a[1]), p1 = project(s.b[0], s.b[1]);
+          ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  if (S.ov.depth && S.geo.depth.length) {
+    const show = new Set(z >= 8.5 ? [...DEPTHS_MAJOR, ...DEPTHS_MINOR] : z >= 7.5 ? [...DEPTHS_MAJOR, 20, 30, 200] : z >= 6 ? DEPTHS_MAJOR : [100, 1000]);
+    for (const c of S.geo.depth) {
+      if (!show.has(c.fm)) continue;
+      const major = DEPTHS_MAJOR.includes(c.fm);
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = major ? 3.4 : 2.4; strokeRings(ctx, c.rings);
+      ctx.strokeStyle = 'rgba(10,10,10,.95)'; ctx.lineWidth = major ? 1.4 : 0.9;
+      const spots = strokeRings(ctx, c.rings, 180);
+      ctx.font = `${major ? 700 : 600} 11px system-ui, sans-serif`;
+      placeLabels(ctx, spots, `${c.fm}`, boxes, size, major ? 300 : 380);
+    }
+  }
+
+  if (S.geo.land.length) {
+    ctx.fillStyle = S.prod === 'bottom' ? '#6b6352' : '#2b2f33'; fillRings(ctx, S.geo.land);
+    ctx.strokeStyle = '#c9d1d9'; ctx.lineWidth = 1; strokeRings(ctx, S.geo.land);
+  }
+
+  if ((S.ov.cur || S.prod === 'cur') && (S.data.curb || S.data.hf)) drawCurrents(ctx, size);
+  if (S.ov.wrecks) drawWrecks(ctx, size, z);
+  if (S.prod === 'fish') drawHotspots(ctx);
+
+  if (S.ov.ports) {
+    ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'left';
+    for (const [name, la, lo] of PORTS) {
+      const [x, y] = project(la, lo);
+      if (x < -50 || y < -20 || x > size.x + 50 || y > size.y + 20) continue;
+      const home = name === S.home, label = name.replace(' Inlet', '');
+      ctx.beginPath(); ctx.arc(x, y, home ? 5 : 3.5, 0, 7); ctx.fillStyle = home ? '#35c2ff' : '#fff'; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#000'; ctx.stroke();
+      if (z >= 7.5 || home) {
+        const lw = ctx.measureText(label).width;
+        haloText(ctx, label, x - lw - 8, y, '#fff', 'rgba(0,0,0,.75)');
+        boxes.push([x - lw - 11, y - 8, x + 6, y + 8]);
+      }
+    }
+    ctx.textAlign = 'center';
+  }
+  if (S.ov.places) drawPlaces(ctx, size, z, boxes);
+
+  const cc = map.getCenter(), tdHere = inLoran(cc.lat, cc.lng);
+  if ((S.grid === 'td' || S.grid === 'both') && tdHere) drawTdGrid(ctx, size, z);
+  if (S.grid === 'td' && !tdHere) drawGrid(ctx, size, z);       // no Loran coverage here: fall back to lat/lon
+  if (S.grid === 'll' || S.grid === 'both') drawGrid(ctx, size, z);
+}
+
+function drawGrid(ctx, size, z) {
+  const stepMin = z >= 10 ? 5 : z >= 8.5 ? 10 : z >= 7.5 ? 15 : z >= 6.5 ? 30 : 60;
+  const b = map.getBounds(), st = stepMin / 60;
+  const lat0 = Math.floor(b.getSouth() / st) * st, lon0 = Math.floor(b.getWest() / st) * st, lab = [];
+  ctx.save();
+  for (let la = lat0; la <= b.getNorth() + st; la += st) {
+    const whole = Math.abs(la - Math.round(la)) < 1e-6, y = project(la, b.getWest())[1];
+    ctx.strokeStyle = whole ? 'rgba(255,255,255,.75)' : 'rgba(255,255,255,.45)'; ctx.lineWidth = whole ? 1.2 : 0.8;
+    ctx.setLineDash(whole ? [] : [6, 4]); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size.x, y); ctx.stroke();
+    lab.push(['lat', la, y]);
+  }
+  for (let lo = lon0; lo <= b.getEast() + st; lo += st) {
+    const whole = Math.abs(lo - Math.round(lo)) < 1e-6, x = project(b.getSouth(), lo)[0];
+    ctx.strokeStyle = whole ? 'rgba(255,255,255,.75)' : 'rgba(255,255,255,.45)'; ctx.lineWidth = whole ? 1.2 : 0.8;
+    ctx.setLineDash(whole ? [] : [6, 4]); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size.y); ctx.stroke();
+    lab.push(['lon', lo, x]);
+  }
+  ctx.setLineDash([]);
+  ctx.font = '700 11px system-ui, sans-serif';
+  const pxLon = Math.abs(project(b.getSouth(), lon0 + st)[0] - project(b.getSouth(), lon0)[0]);
+  const pxLat = Math.abs(project(lat0 + st, b.getWest())[1] - project(lat0, b.getWest())[1]);
+  const eLon = Math.max(1, Math.ceil(78 / pxLon)), eLat = Math.max(1, Math.ceil(24 / pxLat));
+  const nth = (v, e) => Math.round(v / st) % e === 0;
+  const fmt = (v, h) => { const a = Math.abs(v), d = Math.floor(a + 1e-9), m = Math.round((a - d) * 60); return `${d}°${String(m).padStart(2, '0')}'${h}`; };
+  for (const [k, v, p] of lab) {
+    if (k === 'lat' && nth(v, eLat) && p > 60 && p < size.y - 110) tag(ctx, fmt(v, v >= 0 ? 'N' : 'S'), 4, p, 'left');
+    if (k === 'lon' && nth(v, eLon) && p > 90 && p < size.x - 60) tag(ctx, fmt(v, v >= 0 ? 'E' : 'W'), p, 60, 'center');
+  }
+  ctx.restore();
+}
+function tag(ctx, txt, x, y, align, bg = 'rgba(8,17,27,.85)', fg = '#fff') {
+  const w = ctx.measureText(txt).width + 10, h = 17, bx = align === 'left' ? x : x - w / 2;
+  ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(bx, y - h / 2, w, h, 4); ctx.fill();
+  ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.fillText(txt, bx + w / 2, y + 0.5);
+}
+
+// Loran TD lines: hyperbolas computed for the current view, contoured, labeled in yellow/green
+let tdCache = { key: '' };
+function drawTdGrid(ctx, size, z) {
+  const b = map.getBounds().pad(0.1), key = `${b.toBBoxString()}|${S.tdPair}|${S.tdOff}`;
+  if (tdCache.key !== key) {
+    const nx = 90, ny = 70, g = { nx, ny, lat0: b.getSouth(), lon0: b.getWest(), dlat: (b.getNorth() - b.getSouth()) / (ny - 1), dlon: (b.getEast() - b.getWest()) / (nx - 1) };
+    const A = new Float64Array(nx * ny), B = new Float64Array(nx * ny);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const [a, c] = tds(g.lat0 + j * g.dlat, g.lon0 + i * g.dlon); A[j * nx + i] = a; B[j * nx + i] = c; }
+    const pick = (arr) => {
+      const span = d3.max(arr) - d3.min(arr), steps = [1, 2, 5, 10, 20, 50, 100, 200, 500];
+      const st = steps.find((s) => span / s <= 14) || 1000;
+      const th = []; for (let t = Math.ceil(d3.min(arr) / st) * st; t <= d3.max(arr); t += st) th.push(t);
+      return { st, c: contourRings({ ...g, nx, ny }, arr, th) };
+    };
+    tdCache = { key, a: pick(A), b: pick(B) };
+  }
+  const boxes = [];
+  for (const [set, col] of [[tdCache.a, '#ffd23f'], [tdCache.b, '#7dff9a']]) {
+    for (const c of set.c) {
+      ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 2.6; strokeRings(ctx, c.rings);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.1;
+      const spots = strokeRings(ctx, c.rings, 120);
+      ctx.font = '700 10.5px system-ui, sans-serif';
+      placeLabels(ctx, spots, `${c.value}`, boxes, size, 420, col, 'rgba(0,0,0,.85)');
+    }
+  }
+}
+
+// Current at a point: HF radar (hourly, 2-6 km) where it reaches, satellite geostrophic (daily, 25 km) beyond.
+function curAt(lat, lon) {
+  for (const [h, lbl] of [[map.getZoom() >= 9 && S.data.hf1, 'HF radar 1 km'], [S.data.hf, 'HF radar 6 km']]) {
+    if (h) { const u = sample(h, lat, lon, h.u), v = sample(h, lat, lon, h.vv); if (u === u && v === v) return [u, v, lbl]; }
+  }
+  const b = S.data.curb;
+  if (b) { const u = sample(b, lat, lon, b.u), v = sample(b, lat, lon, b.vv); if (u === u && v === v) return [u, v, 'satellite']; }
+  return null;
+}
+// Arrows on a fixed screen spacing, so detail scales with zoom; length and color by speed
+function drawCurrents(ctx, size) {
+  const sp = S.prod === 'cur' ? 34 : 46;
+  for (let y = sp / 2; y < size.y; y += sp) for (let x = sp / 2; x < size.x; x += sp) {
+    const ll = map.containerPointToLatLng([x, y]), c = curAt(ll.lat, ll.lng); if (!c) continue;
+    const z = sample(S.data.bathy, ll.lat, ll.lng); if (z === z && z > 0) continue;
+    const [u, v] = c, kt = Math.hypot(u, v) * 1.94384; if (kt < 0.05) continue;
+    const L0 = Math.min(sp * 0.95, 7 + kt * 16), a = Math.atan2(-v, u), x0 = x - Math.cos(a) * L0 / 2, y0 = y - Math.sin(a) * L0 / 2;
+    const x2 = x0 + Math.cos(a) * L0, y2 = y0 + Math.sin(a) * L0;
+    const col = S.prod === 'cur' ? 'rgba(255,255,255,.95)' : kt >= 1.5 ? '#ff5ad1' : kt >= 0.75 ? '#fff' : 'rgba(255,255,255,.75)';
+    for (const [cc, w] of [['rgba(0,0,0,.75)', 3.4], [col, 1.5]]) {
+      ctx.strokeStyle = cc; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x2, y2);
+      ctx.lineTo(x2 - Math.cos(a - 0.45) * 6, y2 - Math.sin(a - 0.45) * 6); ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - Math.cos(a + 0.45) * 6, y2 - Math.sin(a + 0.45) * 6); ctx.stroke();
+    }
+  }
+}
+
+// ---------- Wrecks, fish havens, obstructions (NOAA ENC, shipped with the app) ----------
+let WRECKS = null;
+fetch('data/wrecks.json').then((r) => r.json()).then((d) => { WRECKS = d.rows; chart?.draw(); }).catch(() => {});
+function drawWrecks(ctx, size, z) {
+  if (!WRECKS || z < 8) return;
+  const b = map.getBounds().pad(0.05);
+  ctx.save(); ctx.lineWidth = 1.4;
+  for (const [la, lo, t] of WRECKS) {
+    if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
+    if ((t === 'O' && z < 9.5) || (t === 'W' && z < 8.5)) continue;
+    const [x, y] = project(la, lo);
+    if (t === 'W') {      // chart-style wreck: hull line with three masts
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 3.6; wreckGlyph(ctx, x, y); ctx.strokeStyle = '#ff9f43'; ctx.lineWidth = 1.6; wreckGlyph(ctx, x, y);
+    } else if (t === 'F') {   // fish haven / artificial reef
+      ctx.fillStyle = '#39d98a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.rect(x - 4.5, y - 4.5, 9, 9); ctx.fill(); ctx.stroke();
+    } else {
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.stroke();
+      ctx.strokeStyle = '#e6e6e6'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function wreckGlyph(ctx, x, y) {
+  ctx.beginPath(); ctx.moveTo(x - 7, y); ctx.lineTo(x + 7, y);
+  for (const dx of [-3.5, 0, 3.5]) { ctx.moveTo(x + dx, y - 4); ctx.lineTo(x + dx, y + 4); }
+  ctx.stroke();
+}
+function wrecksNear(lat, lon, nm = 0.75) {
+  if (!WRECKS) return [];
+  const out = [];
+  for (const r of WRECKS) {
+    if (Math.abs(r[0] - lat) > 0.02 || Math.abs(r[1] - lon) > 0.025) continue;
+    const d = rangeBearing([lat, lon], [r[0], r[1]])[0]; if (d <= nm) out.push([d, r]);
+  }
+  return out.sort((a, b) => a[0] - b[0]).slice(0, 4);
+}
+
+// ---------- Place names (NOAA chart names in US waters, OpenStreetMap elsewhere; shipped with the app) ----------
+let PLACES = null;
+fetch('data/places.json').then((r) => r.json()).then((d) => { PLACES = d.rows; chart?.draw(); }).catch(() => {});
+// minimum zoom by kind + rank (rank 1 = major: canyons/banks/seamounts, cities)
+const PLACE_Z = { sea: [6.5, 8.5], land: [8, 9], island: [7.5, 9.5], town: [7, 8.5, 10] };
+const PLACE_STYLE = {
+  sea: { font: 'italic 600 11.5px Georgia, "Times New Roman", serif', fg: '#bfe6ff', bg: 'rgba(3,18,34,.85)' },
+  land: { font: 'italic 600 11px Georgia, "Times New Roman", serif', fg: '#f1f1e6', bg: 'rgba(0,0,0,.75)' },
+  island: { font: '700 11px system-ui, sans-serif', fg: '#ffffff', bg: 'rgba(0,0,0,.75)' },
+  town: { font: '500 10.5px system-ui, sans-serif', fg: '#e9e4d6', bg: 'rgba(0,0,0,.7)' },
+};
+function drawPlaces(ctx, size, z, boxes) {
+  if (!PLACES) return;
+  const b = map.getBounds().pad(0.02), seen = new Set();
+  // sea features first (what matters offshore), then islands, capes, towns
+  const order = ['sea', 'island', 'land', 'town'];
+  ctx.save(); ctx.textBaseline = 'middle';
+  let drawn = 0;
+  for (const kind of order) {
+    const st = PLACE_STYLE[kind]; ctx.font = st.font;
+    for (const [la, lo, name, k, rank] of PLACES) {
+      if (k !== kind || drawn > 160) continue;
+      const minZ = PLACE_Z[k][Math.min(rank, PLACE_Z[k].length) - 1]; if (z < minZ) continue;
+      if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
+      if (seen.has(name)) continue;                      // big features have several chart labels; show one
+      const [x, y] = project(la, lo), w = ctx.measureText(name).width;
+      const dx = kind === 'town' ? 6 : -w / 2, bx = [x + dx - 3, y - 8, x + dx + w + 3, y + 8];
+      if (bx[0] < 60 || bx[1] < 74 || bx[2] > size.x - 50 || bx[3] > size.y - 100) continue;
+      if (boxes.some((o) => !(bx[2] < o[0] || bx[0] > o[2] || bx[3] < o[1] || bx[1] > o[3]))) continue;
+      boxes.push(bx); seen.add(name); drawn++;
+      if (kind === 'town') { ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fillStyle = st.fg; ctx.fill(); }
+      ctx.textAlign = 'left'; ctx.lineWidth = 3; ctx.strokeStyle = st.bg; ctx.strokeText(name, x + dx, y); ctx.fillStyle = st.fg; ctx.fillText(name, x + dx, y);
+    }
+  }
+  ctx.restore(); ctx.textAlign = 'center';
+}
+
+// ---------- Live NDBC buoys ----------
+let buoyLayer = null, BUOYS = [];
+async function loadBuoys() {
+  try {
+    const txt = await (await fetch('/erddap/ndbc/data/latest_obs/latest_obs.txt')).text();
+    const rows = txt.split('\n').filter((l) => l && l[0] !== '#').map((l) => l.trim().split(/\s+/));
+    const n = (x) => (x === 'MM' || x === undefined ? null : +x);
+    BUOYS = rows.map((c) => ({
+      id: c[0], lat: +c[1], lon: +c[2], t: `${c[3]}-${c[4]}-${c[5]}T${c[6]}:${c[7]}:00Z`, wdir: n(c[8]), wspd: n(c[9]), gst: n(c[10]),
+      wvht: n(c[11]), dpd: n(c[12]), mwd: n(c[14]), pres: n(c[15]), atmp: n(c[17]), wtmp: n(c[18]),
+    })).filter((b) => b.lat > WORLD.s && b.lat < WORLD.n && b.lon > WORLD.w && b.lon < WORLD.e);
+    drawBuoys();
+  } catch (e) { console.warn('buoys', e); }
+}
+function buoyHtml(b) {
+  const kt = (ms) => (ms == null ? '–' : `${Math.round(ms * 1.94384)} kt`), ft = (m) => (m == null ? '–' : `${(m * 3.28084).toFixed(1)} ft`);
+  const age = Math.round((Date.now() - new Date(b.t)) / 60000);
+  return `<div class="pp"><div class="coord">NDBC ${b.id} <a href="https://www.ndbc.noaa.gov/station_page.php?station=${b.id}" target="_blank" rel="noopener">station page</a></div><table>
+    <tr><td>Water temp</td><td>${b.wtmp == null ? '–' : C2F(b.wtmp).toFixed(1) + '°F'}</td></tr>
+    <tr><td>Wind</td><td>${b.wdir == null ? '' : Math.round(b.wdir) + '° '}${kt(b.wspd)} g ${kt(b.gst)}</td></tr>
+    <tr><td>Waves</td><td>${ft(b.wvht)}${b.dpd ? ` @ ${b.dpd} s` : ''}${b.mwd != null ? ` from ${Math.round(b.mwd)}°` : ''}</td></tr>
+    <tr><td>Air / pressure</td><td>${b.atmp == null ? '–' : C2F(b.atmp).toFixed(0) + '°F'} / ${b.pres ?? '–'} hPa</td></tr>
+    <tr><td>Updated</td><td>${age < 120 ? `${age} min ago` : `${Math.round(age / 60)} h ago`}</td></tr></table></div>`;
+}
+function drawBuoys() {
+  if (buoyLayer) { map.removeLayer(buoyLayer); buoyLayer = null; }
+  if (!S.ov.buoys || !BUOYS.length) return;
+  // offshore NDBC buoys (5-digit ids) always; shore stations (C-MAN, NOS) only when zoomed in
+  const z = map.getZoom(), list = BUOYS.filter((b) => /^\d{5}$/.test(b.id) || z >= 9);
+  buoyLayer = L.layerGroup(list.map((b) => {
+    const label = b.wtmp != null ? `${Math.round(C2F(b.wtmp))}°` : b.wvht != null ? `${(b.wvht * 3.28084).toFixed(0)}'` : '';
+    return L.marker([b.lat, b.lon], { icon: L.divIcon({ className: '', html: `<div class="buoy"><i></i>${label ? `<span>${label}</span>` : ''}</div>`, iconSize: [10, 10], iconAnchor: [5, 5] }) })
+      .bindPopup(() => buoyHtml(b), { maxWidth: 300 });
+  })).addTo(map);
+}
+loadBuoys(); setInterval(loadBuoys, 10 * 60 * 1000);
+let lastBuoyZoomBand = null;
+map.on('zoomend', () => { const band = map.getZoom() >= 9; if (band !== lastBuoyZoomBand) { lastBuoyZoomBand = band; drawBuoys(); } });
+
+// ---------- Raster ----------
+function rasterize(g, pixel) {   // pixel(lat, lon, out[4]) -> sets rgba; returns {url, bounds}
+  const s = g.lat0 - g.dlat / 2, n = g.lat0 + (g.ny - 0.5) * g.dlat, w = g.lon0 - g.dlon / 2, e = g.lon0 + (g.nx - 0.5) * g.dlon;
+  // draw at about the data's own resolution; the browser's GPU scaling does the smoothing
+  const W = clamp(Math.round(g.nx * 1.25), 360, 1100), y0 = merc(s), y1 = merc(n);
+  const H = clamp(Math.round(W * (y1 - y0) / ((e - w) * Math.PI / 180)), 50, 2400);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), d = img.data, px = [0, 0, 0, 0];
+  for (let py = 0; py < H; py++) {
+    const lat = imerc(y1 - (py + 0.5) / H * (y1 - y0));
+    for (let qx = 0; qx < W; qx++) {
+      px[3] = 0; pixel(lat, w + (qx + 0.5) / W * (e - w), px);
+      const o = (py * W + qx) * 4; d[o] = px[0]; d[o + 1] = px[1]; d[o + 2] = px[2]; d[o + 3] = px[3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return { url: cv.toDataURL('image/png'), bounds: [[s, w], [n, e]] };
+}
+
+function renderRaster() {
+  const p = PRODUCTS[S.prod], g = S.data[S.prod];
+  if (!g) { if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; } return; }
+  let r;
+  if (S.prod === 'bottom') {
+    const lt = LUTS.bottom, rng = S.range.bottom || [0, 2500];
+    r = rasterize(g, (lat, lon, o) => {
+      const z = sample(g, lat, lon); if (z !== z) return;
+      const sh = sample(S.data.shade, lat, lon), f = sh === sh ? 0.28 + 0.9 * sh : 1;
+      if (z >= 0) { o[0] = 160 * f; o[1] = 150 * f; o[2] = 125 * f; o[3] = 255; return; }
+      const t = clamp(Math.sqrt(clamp(-z / FATHOM / rng[1], 0, 1)), 0, 1), i = Math.round(t * 255) * 3;
+      o[0] = Math.min(255, lt[i] * f); o[1] = Math.min(255, lt[i + 1] * f); o[2] = Math.min(255, lt[i + 2] * f); o[3] = 255;
+    });
+  } else {
+    const lt = LUTS[S.prod], rng = S.range[S.prod];
+    if (!rng) { if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; } return; }
+    r = rasterize(g, (lat, lon, o) => {
+      const v = sample(g, lat, lon); if (v !== v) return;
+      const i = Math.round(clamp(tOf(p, v, rng), 0, 1) * 255) * 3;
+      o[0] = lt[i]; o[1] = lt[i + 1]; o[2] = lt[i + 2]; o[3] = 255;
+    });
+  }
+  if (dataLayer) { dataLayer.setUrl(r.url); dataLayer.setBounds(L.latLngBounds(r.bounds)); }
+  else dataLayer = L.imageOverlay(r.url, r.bounds, { pane: 'data', className: 'smooth' }).addTo(map);
+}
+
+function renderRelief() {
+  const want = S.ov.relief && S.prod !== 'bottom' && S.data.shade;
+  if (!want) { if (reliefLayer) { map.removeLayer(reliefLayer); reliefLayer = null; } return; }
+  const g = S.data.shade, dg = S.data[S.prod];
+  const r = rasterize(g, (lat, lon, o) => {
+    if (!dg || sample(dg, lat, lon) !== sample(dg, lat, lon)) return;   // only shade where the chart has data
+    const sh = sample(g, lat, lon); if (sh !== sh) return;
+    const v = Math.round(clamp(110 + 160 * sh, 0, 255)); o[0] = o[1] = o[2] = v; o[3] = 255;
+  });
+  if (reliefLayer) { reliefLayer.setUrl(r.url); reliefLayer.setBounds(L.latLngBounds(r.bounds)); }
+  else reliefLayer = L.imageOverlay(r.url, r.bounds, { pane: 'relief', className: 'smooth', opacity: 0.75 }).addTo(map);
+}
+
+function viewValues(g) {
+  const b = map.getBounds(), out = [];
+  for (let j = 0; j < g.ny; j++) {
+    const la = g.lat0 + j * g.dlat; if (la < b.getSouth() || la > b.getNorth()) continue;
+    for (let i = 0; i < g.nx; i++) {
+      const lo = g.lon0 + i * g.dlon; if (lo < b.getWest() || lo > b.getEast()) continue;
+      const v = g.v[j * g.nx + i]; if (v === v) out.push(v);
+    }
+  }
+  return out.sort((a, b2) => a - b2);
+}
+
+// Domain = what's on screen (the slider's full travel); range = what the colors stretch across
+function autoRange(force) {
+  const p = PRODUCTS[S.prod], g = S.data[S.prod]; if (!g) return;
+  if (S.prod === 'bottom') {
+    const vals = viewValues(g).filter((z) => z < 0).map((z) => -z / FATHOM).sort((a, b) => a - b);
+    const hi = vals.length ? Math.max(50, vals[Math.floor(vals.length * 0.98)]) : 2500;
+    S.domain = [0, hi]; S.range.bottom = [0, hi]; return;
+  }
+  const vals = viewValues(g); if (vals.length < 10) { delete S.range[S.prod]; S.domain = null; return; }
+  let dlo = vals[0], dhi = vals[vals.length - 1];
+  let lo = vals[Math.floor(vals.length * 0.02)], hi = vals[Math.floor(vals.length * 0.98)];
+  if (p.diverging) { const m = Math.max(Math.abs(lo), Math.abs(hi), 5); lo = -m; hi = m; dlo = Math.min(dlo, lo); dhi = Math.max(dhi, hi); }
+  if (p.log) { dlo = Math.max(0.01, dlo); lo = Math.max(dlo, lo); hi = Math.max(lo * 2, hi); dhi = Math.max(dhi, hi); }
+  else { lo = Math.floor(lo / p.step) * p.step; hi = Math.ceil(hi / p.step) * p.step; if (hi - lo < p.step * 4) hi = lo + p.step * 4; dlo = Math.min(dlo, lo); dhi = Math.max(dhi, hi); }
+  S.domain = [dlo, dhi];
+  if (S.auto || force || !S.range[S.prod]) S.range[S.prod] = [lo, hi];
+}
+
+// ---------- Legend + dual-handle slider ----------
+function fmtTick(p, v) { return p.log ? (v < 1 ? v.toFixed(2) : v.toFixed(1)) : Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1); }
+function domT(v) { const p = PRODUCTS[S.prod]; return clamp(tOf(p, v, S.domain), 0, 1); }
+function drawLegend() {
+  const p = PRODUCTS[S.prod], g = S.data[S.prod], rng = S.range[S.prod];
+  let when = '';
+  if (p.hourly && g?.times?.length) when = niceHour(g.times[g.times.length - 1]);
+  else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
+  const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
+  $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}</span>`;
+  $('legend').classList.toggle('fixed', !!p.noLegendRange);
+  if (!rng || !S.domain) { $('lgBar').style.background = `linear-gradient(90deg, ${p.stops.join(',')})`; return; }
+  const a = domT(rng[0]) * 100, b = domT(rng[1]) * 100, n = p.stops.length - 1;
+  const stops = p.stops.map((c, i) => `${c} ${(a + (b - a) * i / n).toFixed(2)}%`);
+  $('lgBar').style.background = `linear-gradient(90deg, ${p.stops[0]} 0%, ${stops.join(',')}, ${p.stops[n]} 100%)`;
+  $('thLo').style.left = `${a}%`; $('thHi').style.left = `${b}%`;
+  $('thLo').firstChild.textContent = fmtTick(p, rng[0]); $('thHi').firstChild.textContent = fmtTick(p, rng[1]);
+  $('lgMin').textContent = fmtTick(p, S.domain[0]); $('lgMax').textContent = fmtTick(p, S.domain[1]);
+  $('lgAuto').classList.toggle('on', S.auto);
+}
+let rafPending = false;
+function dragThumb(which, ev) {
+  ev.preventDefault();
+  const track = $('lgTrack').getBoundingClientRect(), p = PRODUCTS[S.prod];
+  const move = (e) => {
+    const t = clamp((e.clientX - track.left) / track.width, 0, 1), rng = S.range[S.prod].slice();
+    let v = vOf(p, t, S.domain); if (!p.log) v = Math.round(v / p.step) * p.step;
+    if (which === 0) rng[0] = Math.min(v, rng[1] - (p.log ? rng[1] * 0.1 : p.step)); else rng[1] = Math.max(v, rng[0] + (p.log ? rng[0] * 0.1 : p.step));
+    S.auto = false; S.range[S.prod] = rng; drawLegend();
+    if (!rafPending) { rafPending = true; setTimeout(() => { rafPending = false; renderRaster(); }, 60); }
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); renderRaster(); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+$('thLo').addEventListener('pointerdown', (e) => dragThumb(0, e));
+$('thHi').addEventListener('pointerdown', (e) => dragThumb(1, e));
+for (const [id, k] of [['thLo', 0], ['thHi', 1]]) {
+  $(id).addEventListener('keydown', (e) => {
+    const p = PRODUCTS[S.prod], d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0;
+    if (!d || !S.range[S.prod]) return; e.preventDefault();
+    const rng = S.range[S.prod].slice(); rng[k] = p.log ? rng[k] * (d > 0 ? 1.1 : 1 / 1.1) : rng[k] + d * p.step;
+    if (rng[1] <= rng[0]) return; S.auto = false; S.range[S.prod] = rng; drawLegend(); renderRaster();
+  });
+}
+$('lgAuto').onclick = () => { S.auto = true; autoRange(true); renderRaster(); drawLegend(); };
+
+// ---------- Loading ----------
+const dayArg = (p) => (S.date ? p.day(S.date) : null);
+
+// ---------- Copernicus Marine (EU) backup/primary source ----------
+// Their public map-tile service (no account, CORS open, CDN-cached 30 days). We ask for tiles drawn in a gray
+// color scale over a known range, then turn each pixel back into a number with their exact 256-step color table.
+const CMEMS = 'https://wmts.marine.copernicus.eu/teroWmts';
+const CM = {
+  chl_l4: { layer: 'OCEANCOLOUR_GLO_BGC_L4_NRT_009_102/cmems_obs-oc_glo_bgc-plankton_nrt_l4-gapfree-multi-4km_P1D_202311/CHL', min: 0.01, max: 50, log: true, res: 0.0417 },
+  chl_l3: { layer: 'OCEANCOLOUR_GLO_BGC_L3_NRT_009_101/cmems_obs-oc_glo_bgc-plankton_nrt_l3-multi-4km_P1D_202411/CHL', min: 0.01, max: 50, log: true, res: 0.0417 },
+  sla: { layer: 'SEALEVEL_GLO_PHY_L4_NRT_008_046/cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D_202506/sla', min: -1.5, max: 1.5, res: 0.125 },
+  ugos: { layer: 'SEALEVEL_GLO_PHY_L4_NRT_008_046/cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D_202506/ugos', min: -3, max: 3, res: 0.125 },
+  vgos: { layer: 'SEALEVEL_GLO_PHY_L4_NRT_008_046/cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D_202506/vgos', min: -3, max: 3, res: 0.125 },
+  mld: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_0.083deg_P1D-m_202406/mlotst', min: 0, max: 400, res: 0.083, model: true },
+  so: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m_202406/so', min: 28, max: 38, res: 0.083, model: true },
+};
+const cmStyle = (s) => `cmap:gray,range:${s.min}/${s.max}${s.log ? ',logScale' : ''}`;
+const cmTile = (s, z, x, y, day) => `${CMEMS}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${encodeURIComponent(s.layer)}&STYLE=${encodeURIComponent(cmStyle(s))}` +
+  `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day}T00:00:00Z`;
+let CM_INV = null;      // gray level -> color-table index
+async function cmInverse() {
+  if (CM_INV) return CM_INV;
+  const s = CM.sla;
+  const d = await (await fetch(`${CMEMS}?SERVICE=WMTS&REQUEST=GetLegend&LAYER=${encodeURIComponent(s.layer)}&STYLE=${encodeURIComponent(cmStyle(s))}&FORMAT=application/json`)).json();
+  const lut = d.continuous.cmap.colorMap, inv = new Uint8Array(256);
+  for (let g = 0; g < 256; g++) { let best = 0, bd = 1e9; lut.forEach((c, k) => { const dd = Math.abs(c[0] - g); if (dd < bd) { bd = dd; best = k; } }); inv[g] = Math.round(best * 255 / (lut.length - 1)); }
+  return (CM_INV = inv);
+}
+async function cmImage(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status === 400 ? 'not published for that date' : `Copernicus ${r.status}`);
+  const bmp = await createImageBitmap(await r.blob());
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  return ctx.getImageData(0, 0, 256, 256).data;
+}
+// Newest day each layer has (cached for an hour). Model layers run ahead, so "today" works for them.
+const CM_LATEST = {};
+async function cmLatest(s) {
+  if (s.model) return isoDate(new Date());
+  const hit = CM_LATEST[s.layer]; if (hit && Date.now() - hit.t < 3600e3) return hit.day;
+  for (let d = 0; d <= 6; d++) {
+    const day = addDays(isoDate(new Date()), -d);
+    try { await cmImage(cmTile(s, 3, 2, 3, day)); CM_LATEST[s.layer] = { day, t: Date.now() }; return day; } catch (e) { /* try the day before */ }
+  }
+  throw new Error('Copernicus has no recent data');
+}
+// Fetch + decode the tiles covering a window into a regular lat/lon grid
+async function loadCmems(s, win, day, target = 360) {
+  const inv = await cmInverse();
+  day = day || await cmLatest(s);
+  const spanLon = win.e - win.w;
+  let z = clamp(Math.ceil(Math.log2(360 * target / (256 * spanLon))), 2, 10);
+  z = Math.min(z, clamp(Math.ceil(Math.log2(360 / (256 * s.res / 1.5))), 2, 10));   // no finer than the data
+  const tx = (lon, zz) => Math.floor((lon + 180) / 360 * 2 ** zz), ty = (lat, zz) => Math.floor((1 - merc(lat) / Math.PI) / 2 * 2 ** zz);
+  while (z > 2 && (tx(win.e, z) - tx(win.w, z) + 1) * (ty(win.s, z) - ty(win.n, z) + 1) > 36) z--;
+  const x0 = tx(win.w, z), x1 = tx(win.e, z), y0 = ty(win.n, z), y1 = ty(win.s, z), W = (x1 - x0 + 1) * 256, H = (y1 - y0 + 1) * 256;
+  const mos = new Float32Array(W * H).fill(NaN);
+  const lo = s.log ? Math.log10(s.min) : s.min, hi = s.log ? Math.log10(s.max) : s.max;
+  let ok = 0, lastErr;
+  const jobs = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) jobs.push([x, y]);
+  let next = 0;
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    while (next < jobs.length) {
+      const [x, y] = jobs[next++];
+      try {
+        const px = await cmImage(cmTile(s, z, x, y, day)); ok++;
+        for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) {
+          const o = (j * 256 + i) * 4; if (px[o + 3] < 128) continue;
+          const t = inv[px[o]] / 255, v = lo + t * (hi - lo);
+          mos[((y - y0) * 256 + j) * W + (x - x0) * 256 + i] = s.log ? 10 ** v : v;
+        }
+      } catch (e) { lastErr = e; }
+    }
+  }));
+  if (!ok) throw lastErr || new Error('Copernicus tiles failed');
+  // mosaic is Mercator; resample rows onto even latitude steps
+  const pxDeg = 360 / (256 * 2 ** z), lonW = x0 * 256 * pxDeg - 180;
+  const latTop = imerc(Math.PI * (1 - 2 * y0 / 2 ** z)), latBot = imerc(Math.PI * (1 - 2 * (y1 + 1) / 2 ** z));
+  const dlat = pxDeg * Math.cos((latTop + latBot) / 2 * Math.PI / 180), ny = Math.floor((latTop - latBot) / dlat), v = new Float32Array(W * ny);
+  for (let j = 0; j < ny; j++) {
+    const lat = latBot + (j + 0.5) * dlat, row = Math.floor(((1 - merc(lat) / Math.PI) / 2 * 2 ** z - y0) * 256);
+    if (row < 0 || row >= H) continue;
+    v.set(mos.subarray(row * W, row * W + W), j * W);
+  }
+  return { nx: W, ny, lat0: latBot + dlat / 2, dlat, lon0: lonW + pxDeg / 2, dlon: pxDeg, v, times: [`${day}T00:00:00Z`], date: day, src: 'cmems' };
+}
+
+async function loadGrid(prod) {
+  const p = PRODUCTS[prod], win = windowFor(p.res, p.cells);
+  let text;
+  // zoomed out over a prefetched zone: the hourly snapshot on our own CDN (about a second)
+  try { const pg = await preForView(prod); if (pg) return pg; } catch (e) { console.warn('prefetch', e); }
+  // Copernicus first where it's the better/more reliable source; NOAA if it fails
+  const cmKey = p.family ? curSrc(p.family).cm : p.cm;
+  if (cmKey) {
+    try {
+      const g = await loadCmems(CM[cmKey], win, S.date && !CM[cmKey].model ? S.date : (S.date || null));
+      const out = { ...g, win, v: g.v.map((x) => (x === x && p.conv ? p.conv(x) : x)), src: p.family ? S.src[p.family] : 'cmems', via: 'Copernicus' };
+      return out;
+    } catch (e) {
+      if (p.family) throw e;                     // a chosen Copernicus source: report it
+      console.warn('Copernicus failed, trying NOAA', e);
+    }
+  }
+  if (p.hourly) {
+    // newest chunk must load; older ones are best-effort gap fill
+    const parts = await Promise.allSettled([0, 1, 2, 3].map((k) => getText(p.url(win, S.hour, k)).then((t) => toGrid(parseAsc(t), p.v, p.conv, true))));
+    if (parts[0].status === 'rejected') throw parts[0].reason;
+    const g = parts[0].value, older = parts.slice(1).filter((x) => x.status === 'fulfilled').map((x) => x.value);
+    const slices = [...older.reverse().flatMap((o) => o.slices), ...g.slices];   // oldest -> newest
+    const v = slices[slices.length - 1].slice(), last = slices[slices.length - 1];
+    for (let k = slices.length - 2; k >= 0; k--) { const sl = slices[k]; for (let i = 0; i < v.length; i++) if (v[i] !== v[i]) v[i] = sl[i]; }
+    let fresh = 0, any = 0; for (let i = 0; i < v.length; i++) { if (last[i] === last[i]) fresh++; if (v[i] === v[i]) any++; }
+    g.clearPct = Math.round(100 * fresh / v.length); g.anyPct = Math.round(100 * any / v.length);
+    g.v = v; delete g.slices; g.win = win;
+    if (!S.hour) S.latestHour = g.times[g.times.length - 1];
+    return g;
+  }
+  try { text = await getText(p.url(win, dayArg(p))); }
+  catch (e) { if (!S.date) throw e; text = await getText(p.url(win, null)); }
+  const g = toGrid(parseAsc(text), p.v, p.conv); g.win = win; g.src = p.family ? S.src[p.family] : null;
+  if (p.nrt) await overlayNrt(g, p, win).catch((e) => console.warn('NRT chlorophyll skipped', e));
+  return g;
+}
+
+async function overlayNrt(g, p, win) {
+  const start = addDays(g.date, 1);
+  if (S.date && S.date < start) return;
+  const sec = parseAsc(await getText(p.nrt(win, `${start}T12:00:00Z`, S.date ? `${S.date}T12:00:00Z` : 'last')));
+  const n = toGrid(sec, p.v, p.conv, true);
+  const best = n.slices[n.slices.length - 1].slice();
+  for (let k = n.slices.length - 2; k >= 0; k--) { const sl = n.slices[k]; for (let i = 0; i < best.length; i++) if (best[i] !== best[i]) best[i] = sl[i]; }
+  const cg = { ...n, v: best }; let painted = 0;
+  for (let j = 0; j < g.ny; j++) {
+    const la = g.lat0 + j * g.dlat;
+    for (let i = 0; i < g.nx; i++) {
+      const k = j * g.nx + i; if (g.v[k] !== g.v[k]) continue;
+      const v = sample(cg, la, g.lon0 + i * g.dlon); if (v === v) { g.v[k] = v; painted++; }
+    }
+  }
+  if (painted) { g.baseDate = g.date; g.date = n.date; }
+}
+
+// Depth: zoomed out, cut it from the 2-arc-minute grid shipped with the app (instant, offline);
+// zoomed in (or outside it), fetch full-resolution ETOPO for the view.
+// One file per zone: East Coast + Gulf, Florida/Bahamas, Pacific Costa Rica
+const BATHY2 = [];
+const bathy2Ready = Promise.all(['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia'].map((n) => Promise.all([fetch(`data/bathy_${n}.json`).then((r) => r.json()), fetch(`data/bathy_${n}.bin`).then((r) => r.arrayBuffer())])
+  .then(([m, b]) => { BATHY2.push({ ...m, z: new Int16Array(b) }); }).catch((e) => console.warn('static bathy', n, e))));
+function bathyFromStatic(win) {
+  const B = BATHY2.find((b) => win.s >= b.lat0 && win.w >= b.lon0 && win.n <= b.lat0 + (b.ny - 1) * b.dlat && win.e <= b.lon0 + (b.nx - 1) * b.dlon);
+  if (!B) return null;
+  const st = Math.max(1, Math.round((win.n - win.s) / B.dlat / 620) || 1);
+  const j0 = Math.floor((win.s - B.lat0) / B.dlat), j1 = Math.ceil((win.n - B.lat0) / B.dlat);
+  const i0 = Math.floor((win.w - B.lon0) / B.dlon), i1 = Math.ceil((win.e - B.lon0) / B.dlon);
+  const ny = Math.floor((j1 - j0) / st) + 1, nx = Math.floor((i1 - i0) / st) + 1, v = new Float32Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) v[j * nx + i] = B.z[(j0 + j * st) * B.nx + i0 + i * st];
+  return { nx, ny, v, lat0: B.lat0 + j0 * B.dlat, lon0: B.lon0 + i0 * B.dlon, dlat: B.dlat * st, dlon: B.dlon * st, times: [], date: null, win: { ...win, stride: Math.round((B.dlat * st) * 240), static: true } };
+}
+async function loadBathy() {
+  const win = windowFor(1 / 240, 620, 0.5);
+  let g = null;
+  if (map.getZoom() < 9) { await bathy2Ready; g = bathyFromStatic(win); }
+  if (!g) {
+    const url = `/erddap/pfeg/griddap/ETOPO_2022_v1_15s.asc?${q(`z[${latRange(win, true)}][${lonRange(win)}]`)}`;
+    g = toGrid(parseAsc(await getText(url)), 'z'); g.win = win;
+  }
+  const vals = Float64Array.from(g.v, (x) => (x !== x ? 0 : x));
+  S.geo.land = contourRings(g, vals, [0])[0].rings;
+  const fms = [...DEPTHS_MAJOR, ...DEPTHS_MINOR];
+  S.geo.depth = contourRings(g, vals, fms.map((f) => -f * FATHOM)).map((c) => ({ fm: Math.round(-c.value / FATHOM), rings: c.rings }));
+  // Hillshade (sun from the northwest, exaggerated so the seafloor reads)
+  const sh = new Float32Array(g.nx * g.ny).fill(NaN), az = 315 * Math.PI / 180, alt = 45 * Math.PI / 180;
+  for (let j = 1; j < g.ny - 1; j++) {
+    const lat = g.lat0 + j * g.dlat, dx = g.dlon * 111320 * Math.cos(lat * Math.PI / 180), dy = g.dlat * 111320;
+    for (let i = 1; i < g.nx - 1; i++) {
+      const k = j * g.nx + i, ex = g.v[k] < 0 ? 12 : 3;
+      const zx = (vals[k + 1] - vals[k - 1]) / (2 * dx) * ex, zy = (vals[k + g.nx] - vals[k - g.nx]) / (2 * dy) * ex;
+      const slope = Math.atan(Math.hypot(zx, zy)), aspect = Math.atan2(zy, -zx);
+      sh[k] = clamp(Math.cos(alt) * Math.cos(slope) + Math.sin(alt) * Math.sin(slope) * Math.cos(az - aspect), 0, 1);
+    }
+  }
+  S.data.bathy = g; S.data.shade = { ...g, v: sh };
+  S.data.bottom = g;
+}
+
+// Satellite geostrophic currents: Copernicus DUACS (daily, ~14 km, current to today) first, NOAA blended as backup
+async function loadCurrents(days = 1, latest = false) {
+  try {
+    const win = windowFor(0.125, 360), end = S.date && !latest ? S.date : await cmLatest(CM.ugos);
+    const dates = Array.from({ length: days }, (_, k) => addDays(end, k - days + 1));
+    const ok = (x) => (Math.abs(x) < 3 ? x : NaN);
+    const pairs = await Promise.all(dates.map((d) => Promise.all([loadCmems(CM.ugos, win, d), loadCmems(CM.vgos, win, d)])));
+    const us = pairs.map((pp) => pp[0].v.map(ok)), vs = pairs.map((pp) => pp[1].v.map(ok)), g = pairs[pairs.length - 1][0];
+    return { ...g, win: { ...win, stride: 1 }, u: us[us.length - 1], vv: vs[vs.length - 1], us, vs, date: end, via: 'Copernicus' };
+  } catch (e) { console.warn('Copernicus currents failed, trying NOAA', e); }
+  return loadCurrentsNoaa(days, latest);
+}
+async function loadCurrentsNoaa(days = 1, latest = false) {
+  const win = windowFor(0.25, 999), day = latest ? null : S.date, t = day ? `${day}T12:00:00Z` : null;
+  const tq = days > 1 ? (t ? `(${addDays(day, -days + 1)}T00:00:00Z):1:(${t})` : `last-${days - 1}:1:last`) : `(${t || 'last'})`;
+  const ok = (x) => (Math.abs(x) < 3 ? x : NaN);
+  const qv = (v) => `${v}[${tq}][${latRange(win, true)}][${lonRange(win)}]`;
+  let text;
+  try { text = await getText(`/erddap/cw/griddap/noaacwBLENDEDNRTcurrentsDaily.asc?${q(`${qv('u_current')},${qv('v_current')}`)}`); }
+  catch (e) { if (!day) throw e; return loadCurrentsNoaa(days, true); }
+  const sec = parseAsc(text), u = toGrid(sec, 'u_current', ok, true), v = toGrid(sec, 'v_current', ok, true);
+  return { ...u, win, u: u.v, vv: v.v, us: u.slices, vs: v.slices };
+}
+
+// Backward finite-time Lyapunov exponent from the last 6 days of geostrophic currents.
+// Ridges = attracting fronts where water (and bait, weed, temperature breaks) converge.
+function computeFtle(c) {
+  const days = c.us.length, T = (days - 1) * 86400; if (days < 2) throw new Error('need several days of currents');
+  const b = map.getBounds().pad(0.15), N = 220;
+  const s = Math.max(c.lat0, b.getSouth()), n = Math.min(c.lat0 + (c.ny - 1) * c.dlat, b.getNorth());
+  const w = Math.max(c.lon0, b.getWest()), e = Math.min(c.lon0 + (c.nx - 1) * c.dlon, b.getEast());
+  const step = Math.max((n - s), (e - w)) / N, ny = Math.max(2, Math.round((n - s) / step)), nx = Math.max(2, Math.round((e - w) / step));
+  const X = new Float64Array(nx * ny), Y = new Float64Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { Y[j * nx + i] = s + j * step; X[j * nx + i] = w + i * step; }
+  const vel = (lat, lon, tt) => {   // tt in seconds from the first frame
+    const f = clamp(tt / 86400, 0, days - 1), k = Math.min(days - 2, Math.floor(f)), a = f - k;
+    const u0 = sample(c, lat, lon, c.us[k]), u1 = sample(c, lat, lon, c.us[k + 1]);
+    const v0 = sample(c, lat, lon, c.vs[k]), v1 = sample(c, lat, lon, c.vs[k + 1]);
+    const u = u0 + (u1 - u0) * a, v = v0 + (v1 - v0) * a;
+    if (u !== u || v !== v) return null;
+    return [v / 111320, u / (111320 * Math.cos(lat * Math.PI / 180))];
+  };
+  const dt = -3 * 3600, steps = Math.round(T / -dt);
+  for (let p = 0; p < X.length; p++) {
+    let la = Y[p], lo = X[p], tt = T;
+    for (let k = 0; k < steps; k++) {
+      const k1 = vel(la, lo, tt); if (!k1) break;
+      const k2 = vel(la + k1[0] * dt / 2, lo + k1[1] * dt / 2, tt + dt / 2); if (!k2) break;
+      const k3 = vel(la + k2[0] * dt / 2, lo + k2[1] * dt / 2, tt + dt / 2); if (!k3) break;
+      const k4 = vel(la + k3[0] * dt, lo + k3[1] * dt, tt + dt); if (!k4) break;
+      la += dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]); lo += dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]); tt += dt;
+    }
+    Y[p] = la; X[p] = lo;
+  }
+  const out = new Float32Array(nx * ny).fill(NaN), d0 = 2 * step, Td = T / 86400;
+  for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
+    const k = j * nx + i, cl = Math.cos((s + j * step) * Math.PI / 180);
+    if (sample(c, s + j * step, w + i * step, c.us[days - 1]) !== sample(c, s + j * step, w + i * step, c.us[days - 1])) continue;
+    const a = (X[k + 1] - X[k - 1]) * cl / d0 / cl, bb = (X[k + nx] - X[k - nx]) * cl / d0;
+    const cc = (Y[k + 1] - Y[k - 1]) / d0 / cl, dd = (Y[k + nx] - Y[k - nx]) / d0;
+    // Cauchy-Green tensor C = F^T F, largest eigenvalue
+    const c11 = a * a + cc * cc, c12 = a * bb + cc * dd, c22 = bb * bb + dd * dd;
+    const tr = c11 + c22, det = c11 * c22 - c12 * c12, lmax = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det));
+    if (lmax > 0) out[k] = Math.log(Math.sqrt(lmax)) / Td;
+  }
+  return { nx, ny, lat0: s, lon0: w, dlat: step, dlon: step, v: out, date: c.date, win: c.win };
+}
+
+// HF radar surface currents (IOOS, hourly). 6 km normally, 1 km when zoomed in. Newest of the last 3 hours per cell.
+const HF = { lat: [21.74, 46.49], lon: [-97.88, -57.2] };
+async function loadHF(hi = false) {
+  const id = hi ? 'ucsdHfrE1' : 'ucsdHfrE6', res = hi ? 0.009 : 0.055;
+  const w = windowFor(res, 320);
+  const s = Math.max(w.s, HF.lat[0]), n = Math.min(w.n, HF.lat[1]), we = Math.max(w.w, HF.lon[0]), ee = Math.min(w.e, HF.lon[1]);
+  if (s >= n || we >= ee) return null;
+  const tq = S.date ? `(${S.date}T10:00:00Z):1:(${S.date}T12:00:00Z)` : 'last-2:1:last';
+  const box = `[(${s}):${w.stride}:(${n})][(${we}):${w.stride}:(${ee})]`;
+  const sec = parseAsc(await getText(`/erddap/pfeg/griddap/${id}.asc?${q(`water_u[${tq}]${box},water_v[${tq}]${box}`)}`));
+  const ok = (x) => (Math.abs(x) < 4 ? x : NaN);
+  const u = toGrid(sec, 'water_u', ok, true), v = toGrid(sec, 'water_v', ok, true);
+  const newest = (g) => { const out = g.slices[g.slices.length - 1].slice(); for (let k = g.slices.length - 2; k >= 0; k--) for (let i = 0; i < out.length; i++) if (out[i] !== out[i]) out[i] = g.slices[k][i]; return out; };
+  return { ...u, u: newest(u), vv: newest(v), slices: null, win: { ...w, hi }, time: u.times[u.times.length - 1] };
+}
+function hfCovers() {
+  const ok = (h, res) => h !== undefined && (h === null || covers(h, res, 320));
+  return ok(S.data.hf, 0.055) && (map.getZoom() < 9 || ok(S.data.hf1, 0.009));
+}
+
+// Currents chart: speed (knots) on a fine grid over the view, from curAt()
+function buildCurGrid() {
+  const b = map.getBounds().pad(0.2), step = Math.max((b.getNorth() - b.getSouth()) / 260, S.data.hf1 && map.getZoom() >= 9 ? 0.006 : S.data.hf ? 0.02 : 0.04);
+  const ny = Math.max(2, Math.round((b.getNorth() - b.getSouth()) / step)), nx = Math.max(2, Math.round((b.getEast() - b.getWest()) / step));
+  const v = new Float32Array(nx * ny).fill(NaN), g = { nx, ny, lat0: b.getSouth(), lon0: b.getWest(), dlat: step, dlon: step, v };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const la = g.lat0 + j * step, lo = g.lon0 + i * step, z = sample(S.data.bathy, la, lo);
+    if (z === z && z > 0) continue;
+    const c = curAt(la, lo); if (c) v[j * nx + i] = Math.hypot(c[0], c[1]) * 1.94384;
+  }
+  g.date = S.data.hf?.time?.slice(0, 10) || S.data.curb?.date; g.time = S.data.hf?.time;
+  S.data.cur = g;
+}
+
+// ---------- Where to fish ----------
+// Temperature windows (°F): [hard min, ideal min, ideal max, hard max], plus minimum depth (fm) and what structure matters most
+// ocean: 'atl' (Atlantic, Gulf, Caribbean), 'pac' (Eastern Pacific), or both
+const SPECIES = {
+  yellowfin: { label: 'Yellowfin tuna', ocean: 'both', t: [68, 72, 79, 84], fm: 40, w: { brk: 0.35, chl: 0.2, bot: 0.25, eddy: 0.2 } },
+  bigeye: { label: 'Bigeye tuna', ocean: 'both', t: [63, 66, 75, 80], fm: 100, w: { brk: 0.3, chl: 0.1, bot: 0.4, eddy: 0.2 } },
+  bluefin: { label: 'Bluefin tuna', ocean: 'atl', t: [52, 58, 68, 74], fm: 15, w: { brk: 0.35, chl: 0.3, bot: 0.2, eddy: 0.15 } },
+  mahi: { label: 'Mahi', ocean: 'atl', t: [70, 74, 82, 86], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
+  white: { label: 'White marlin', ocean: 'atl', t: [68, 71, 78, 83], fm: 40, w: { brk: 0.35, chl: 0.25, bot: 0.25, eddy: 0.15 } },
+  blue: { label: 'Blue marlin', ocean: 'atl', t: [72, 75, 84, 88], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
+  sailA: { label: 'Sailfish', ocean: 'atl', t: [72, 75, 82, 86], fm: 15, w: { brk: 0.4, chl: 0.25, bot: 0.25, eddy: 0.1 } },
+  blackfin: { label: 'Blackfin tuna', ocean: 'atl', t: [68, 72, 80, 84], fm: 20, w: { brk: 0.35, chl: 0.2, bot: 0.35, eddy: 0.1 } },
+  wahoo: { label: 'Wahoo', ocean: 'both', t: [70, 73, 80, 85], fm: 30, w: { brk: 0.35, chl: 0.15, bot: 0.35, eddy: 0.15 } },
+  // Eastern Pacific (Cabo, Mexico Pacific, Central America)
+  dorado: { label: 'Dorado', ocean: 'pac', t: [72, 76, 84, 88], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
+  striped: { label: 'Striped marlin', ocean: 'pac', t: [66, 69, 77, 81], fm: 50, w: { brk: 0.4, chl: 0.25, bot: 0.25, eddy: 0.1 } },
+  blueP: { label: 'Blue marlin', ocean: 'pac', t: [76, 79, 86, 90], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
+  black: { label: 'Black marlin', ocean: 'pac', t: [75, 78, 85, 89], fm: 30, w: { brk: 0.3, chl: 0.2, bot: 0.4, eddy: 0.1 } },
+  sailP: { label: 'Sailfish', ocean: 'pac', t: [77, 80, 86, 90], fm: 20, w: { brk: 0.4, chl: 0.3, bot: 0.2, eddy: 0.1 } },
+};
+// Which ocean a point is in. The Central American isthmus divide, roughly, from Mexico to Panama.
+function oceanAt(lat, lon) {
+  if (lon < -98) return 'pac';
+  if (lat < 16.2 && lon < -90.5) return 'pac';     // Chiapas, Guatemala
+  if (lat < 13.5 && lon < -87.5) return 'pac';     // El Salvador, Gulf of Fonseca, Nicaragua
+  if (lat < 11.2 && lon < -84.2) return 'pac';     // Guanacaste, Nicoya, central Pacific Costa Rica
+  if (lat < 9.6 && lon < -82.8) return 'pac';      // Osa, Golfito
+  if (lat < 8.6 && lon < -77.5) return 'pac';      // Pacific Panama
+  if (lat < 7.5) return 'pac';                      // south of the isthmus: Gulf of Panama and beyond
+  return 'atl';
+}
+function speciesFor(ocean) { return Object.entries(SPECIES).filter(([, v]) => v.ocean === ocean || v.ocean === 'both'); }
+function tempFit(t, [a, b, c, d]) { return t < a || t > d ? 0 : t < b ? (t - a) / (b - a) : t > c ? (d - t) / (d - c) : 1; }
+function pctNorm(arr, p = 0.95) { const v = Array.from(arr).filter((x) => x === x && x > 0).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length * p)] || 1 : 1; }
+function maxFilter(g, vals, r) {
+  const out = new Float32Array(vals.length).fill(NaN);
+  for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
+    let m = NaN;
+    for (let dj = -r; dj <= r; dj++) { const jj = j + dj; if (jj < 0 || jj >= g.ny) continue;
+      for (let di = -r; di <= r; di++) { const ii = i + di; if (ii < 0 || ii >= g.nx) continue; const x = vals[jj * g.nx + ii]; if (x === x && !(x <= m)) m = x; } }
+    out[j * g.nx + i] = m;
+  }
+  return out;
+}
+function buildFish() {
+  const sst = S.data.sst, sp = SPECIES[S.species] || SPECIES.yellowfin;
+  if (!sst) return;
+  // work on a ~2-3 km grid over the SST window
+  const f = Math.max(1, Math.round(0.025 / sst.dlat));
+  const g = { nx: Math.floor(sst.nx / f), ny: Math.floor(sst.ny / f), lat0: sst.lat0, lon0: sst.lon0, dlat: sst.dlat * f, dlon: sst.dlon * f };
+  const n = g.nx * g.ny, T = new Float32Array(n).fill(NaN), Td = new Float32Array(n).fill(NaN), hourly = new Uint8Array(n);
+  const dep = new Float32Array(n).fill(NaN), lchl = new Float32Array(n).fill(NaN), cur = new Float32Array(n).fill(NaN);
+  // Water temp: the hourly GOES reading (newest clear pixel, last 24 h) where it has one, the daily cloud-free map elsewhere
+  let nh = 0, nw = 0;
+  for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
+    const la = g.lat0 + j * g.dlat, lo = g.lon0 + i * g.dlon, k = j * g.nx + i;
+    Td[k] = sample(sst, la, lo); dep[k] = sample(S.data.bathy, la, lo);
+    const h = sample(S.data.goes, la, lo);
+    if (h === h) { T[k] = h; hourly[k] = 1; nh++; } else T[k] = Td[k];
+    if (dep[k] < 0) nw++;
+    const c = sample(S.data.chl, la, lo); if (c > 0) lchl[k] = Math.log10(c);
+    const cu = curAt(la, lo); if (cu) cur[k] = Math.hypot(cu[0], cu[1]) * 1.94384;
+  }
+  S.fishInfo = { hourlyPct: nw ? Math.round(100 * nh / nw) : 0, hour: S.data.goes?.times?.slice(-1)[0], cur: !!(S.data.curb || S.data.hf) };
+  const grad = (vals, perNm) => {
+    const out = new Float32Array(n).fill(NaN);
+    for (let j = 1; j < g.ny - 1; j++) {
+      const dx = g.dlon * 60 * Math.cos((g.lat0 + j * g.dlat) * Math.PI / 180), dy = g.dlat * 60;
+      for (let i = 1; i < g.nx - 1; i++) {
+        const k = j * g.nx + i, gx = (vals[k + 1] - vals[k - 1]) / (2 * dx), gy = (vals[k + g.nx] - vals[k - g.nx]) / (2 * dy);
+        const m = Math.hypot(gx, gy); if (m === m) out[k] = perNm ? m : m;
+      }
+    }
+    return out;
+  };
+  const sshUp = S.data.ssh ? (() => { const v = new Float32Array(n).fill(NaN); for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) v[j * g.nx + i] = sample(S.data.ssh, g.lat0 + j * g.dlat, g.lon0 + i * g.dlon); return v; })() : null;
+  // spread each structure signal ~4 nm so "near a break" counts, then scale 0-1 by its 95th percentile
+  const r = Math.max(1, Math.round(4 / (g.dlat * 60)));
+  // Temp breaks from the hourly field, except across the seam where hourly meets the daily fill (that edge isn't a real break)
+  const gH = grad(T), gD = grad(Td), gT = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    const mixed = hourly[k - 1] !== hourly[k + 1] || hourly[k - g.nx] !== hourly[k + g.nx];
+    gT[k] = mixed || !hourly[k] ? gD[k] : gH[k];
+  }
+  const brk = maxFilter(g, gT, r), chlE = maxFilter(g, grad(lchl), r), bot = maxFilter(g, grad(dep.map((z) => (z < 0 ? -z / FATHOM : NaN))), r);
+  const eddy = sshUp ? maxFilter(g, grad(sshUp), r) : null;
+  const nb = pctNorm(brk), nc = pctNorm(chlE), nbo = pctNorm(bot), ne = eddy ? pctNorm(eddy) : 1;
+  const score = new Float32Array(n).fill(NaN), parts = new Float32Array(n * 4);
+  const home = PORTS.find((x) => x[0] === S.home);
+  for (let k = 0; k < n; k++) {
+    if (!(dep[k] < 0) || T[k] !== T[k]) continue;
+    const fm = -dep[k] / FATHOM, tf = tempFit(T[k], sp.t);
+    const pb = Math.min(1, (brk[k] || 0) / nb), pc = Math.min(1, (chlE[k] || 0) / nc), po = Math.min(1, (bot[k] || 0) / nbo), pe = eddy ? Math.min(1, (eddy[k] || 0) / ne) : 0;
+    const struct = sp.w.brk * pb + sp.w.chl * pc + sp.w.bot * po + sp.w.eddy * pe;
+    let s = 100 * tf * (0.3 + 0.7 * struct);
+    if (fm < sp.fm) s *= 0.25;
+    // Strong current is hard to fish (lines blow out, drift too fast): full credit to 1.2 kt, tapering hard after that.
+    // Edges of the Stream still score; the middle of it doesn't.
+    const kt = cur[k];
+    if (kt === kt) s *= kt <= 1.2 ? 1 : kt <= 2.5 ? 1 - 0.85 * (kt - 1.2) / 1.3 : 0.05;
+    score[k] = s; parts.set([pb, pc, po, pe], k * 4);
+  }
+  // top spots: best cells at least 8 nm apart, within the run limit from the home inlet
+  const order = Array.from(score.keys()).filter((k) => score[k] > 25).sort((a, b) => score[b] - score[a]);
+  const spots = [];
+  for (const k of order) {
+    const j = Math.floor(k / g.nx), i = k % g.nx, la = g.lat0 + j * g.dlat, lo = g.lon0 + i * g.dlon;
+    if (home && rangeBearing([home[1], home[2]], [la, lo])[0] > S.maxRun) continue;
+    if (spots.some((s) => rangeBearing([s.lat, s.lon], [la, lo])[0] < 8)) continue;
+    if (cur[k] > 2.0) continue;                               // never send you into the middle of the Stream
+    const fmK = -dep[k] / FATHOM, [dMin, dMax] = S.fishDepth;  // your depth range, if set
+    if ((dMin != null && fmK < dMin) || (dMax != null && fmK > dMax)) continue;
+    const [pb, pc, po, pe] = parts.subarray(k * 4, k * 4 + 4);
+    const why = [`${T[k].toFixed(1)}°F${hourly[k] ? '' : ' (daily)'}`];
+    if (cur[k] === cur[k]) why.push(`${cur[k].toFixed(1)} kt current`);
+    if (pb > 0.6) why.push('on a temp break'); if (pc > 0.6) why.push('color edge'); if (po > 0.6) why.push('steep bottom / canyon wall'); if (pe > 0.6) why.push('eddy edge');
+    why.push(`${Math.round(-dep[k] / FATHOM).toLocaleString()} fm`);
+    spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why });
+    if (spots.length >= 8) break;
+  }
+  S.data.fish = { ...g, v: score, date: sst.date };
+  S.fishSpots = spots;
+  renderSpots();
+}
+function drawHotspots(ctx) {
+  ctx.save(); ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  (S.fishSpots || []).forEach((s, i) => {
+    const [x, y] = project(s.lat, s.lon);
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.fillStyle = '#fbe36a'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.fillText(String(i + 1), x, y + 0.5);
+  });
+  ctx.restore();
+}
+function renderSpots() {
+  const el = $('spotList'); if (!el) return;
+  const home = PORTS.find((x) => x[0] === S.home);
+  el.innerHTML = (S.fishSpots || []).map((s, i) => {
+    const [d, b] = home ? rangeBearing([home[1], home[2]], [s.lat, s.lon]) : [0, 0];
+    return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home.replace(' Inlet', '')}</small></li>`;
+  }).join('') || '<li><small>Nothing scores well in range. Try another species or a longer run.</small></li>';
+  const fi = S.fishInfo;
+  $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
+  el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
+}
+
+// Fast stand-in for fillNaN when the filled cells are never drawn: put the mean in the holes.
+// Contour segments that cross a hole get flagged by the caller, so the fill value never shows.
+function meanFill(vals) {
+  let s = 0, n = 0; for (const x of vals) if (x === x) { s += x; n++; }
+  const m = n ? s / n : 0, out = new Float64Array(vals.length);
+  for (let i = 0; i < vals.length; i++) out[i] = vals[i] === vals[i] ? vals[i] : m;
+  return out;
+}
+let sstGeoFor = null;
+function buildSstGeo(g) {
+  // the gradient/breaks are cheap and always shown; isotherms only when that overlay is on (1 °F steps)
+  if (sstGeoFor !== g) { S.geo.grad = gradient(g); buildBreaks(); sstGeoFor = g; S.geo.iso = []; }
+  if (S.ov.iso && !S.geo.iso.length) {
+    let lo = Infinity, hi = -Infinity; for (const x of g.v) if (x === x) { if (x < lo) lo = x; if (x > hi) hi = x; }
+    if (lo === Infinity) return;
+    const th = []; for (let t = Math.floor(lo); t <= Math.ceil(hi); t += 1) th.push(t);
+    S.geo.iso = contourRings(g, meanFill(g.v), th).map((c) => ({ value: c.value, rings: c.rings.map((r) => r.map(([la, lo2, e]) => [la, lo2, e || sample(g, la, lo2) !== sample(g, la, lo2)])) }));
+  }
+}
+// Breaks, Canny-style: keep cells where the gradient is strong AND is the peak across the front
+// (non-maximum suppression), link neighboring edge cells into line segments, drop tiny specks.
+function buildBreaks() {
+  const gr = S.geo.grad, thr = S.brk, segs = [];
+  if (!gr) { S.geo.breaks = []; return; }
+  const { nx, ny } = gr, edge = new Uint8Array(nx * ny);
+  for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
+    const k = j * nx + i, m = gr.v[k]; if (!(m >= thr)) continue;
+    const la = gr.lat0 + j * gr.dlat, lo = gr.lon0 + i * gr.dlon, ox = gr.ux[k], oy = gr.uy[k];
+    const a = sample(gr, la + oy * gr.dlat, lo + ox * gr.dlon), b = sample(gr, la - oy * gr.dlat, lo - ox * gr.dlon);
+    if (!(a > m) && !(b >= m)) edge[k] = m >= thr * 2 ? 2 : 1;
+  }
+  // connected components, so isolated specks (< 4 cells) can be dropped
+  const comp = new Int32Array(nx * ny).fill(-1), size = [];
+  for (let k0 = 0; k0 < edge.length; k0++) {
+    if (!edge[k0] || comp[k0] >= 0) continue;
+    const id = size.length, stack = [k0]; let n = 0; comp[k0] = id;
+    while (stack.length) {
+      const k = stack.pop(); n++; const i = k % nx, j = (k - i) / nx;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
+        const kk = jj * nx + ii; if (edge[kk] && comp[kk] < 0) { comp[kk] = id; stack.push(kk); }
+      }
+    }
+    size.push(n);
+  }
+  const pt = (k) => { const i = k % nx, j = (k - i) / nx; return [gr.lat0 + j * gr.dlat, gr.lon0 + i * gr.dlon]; };
+  for (let k = 0; k < edge.length; k++) {
+    if (!edge[k] || size[comp[k]] < 4) continue;
+    const i = k % nx;
+    for (const d of [1, nx, nx + 1, nx - 1]) {
+      const kk = k + d; if (kk >= edge.length || !edge[kk]) continue;
+      if ((d === 1 || d === nx + 1) && i === nx - 1) continue; if (d === nx - 1 && i === 0) continue;
+      // skip the diagonal when an orthogonal link already covers it (keeps lines 1 cell wide)
+      if (d === nx + 1 && (edge[k + 1] || edge[k + nx])) continue;
+      if (d === nx - 1 && (edge[k - 1] || edge[k + nx])) continue;
+      segs.push({ a: pt(k), b: pt(kk), k: Math.max(edge[k], edge[kk]) });
+    }
+  }
+  S.geo.breaks = segs;
+}
+function buildRings(g) {
+  // contour on a ~240-wide grid: enough for smooth rings, and the same cost whatever the source resolution
+  const f = (g.nx - 1) / 240, rg = f > 1 || g.nx < 120
+    ? (() => { const step = g.dlon * Math.max(f, (g.nx - 1) / 240), nx = Math.max(2, Math.round((g.nx - 1) * g.dlon / step) + 1), ny = Math.max(2, Math.round((g.ny - 1) * g.dlat / step) + 1);
+      const out = { nx, ny, lat0: g.lat0, lon0: g.lon0, dlat: (g.ny - 1) * g.dlat / (ny - 1), dlon: (g.nx - 1) * g.dlon / (nx - 1), v: new Float32Array(nx * ny) };
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) out.v[j * nx + i] = sample(g, out.lat0 + j * out.dlat, out.lon0 + i * out.dlon);
+      return out; })()
+    : g;
+  const up = rg, vals = meanFill(up.v);
+  let lo = Infinity, hi = -Infinity; for (const x of g.v) if (x === x) { if (x < lo) lo = x; if (x > hi) hi = x; }
+  if (lo === Infinity) { S.geo.rings = []; return; }
+  const th = []; for (let t = Math.floor(lo / 5) * 5; t <= hi; t += 5) th.push(t);
+  // hide the parts that run over land/bays (fillNaN invented values there) by flagging them like grid edges
+  S.geo.rings = contourRings(up, vals, th).map((c) => ({
+    value: c.value,
+    rings: c.rings.map((r) => r.map(([la, lo, edge]) => {
+      const z = sample(S.data.bathy, la, lo);
+      return [la, lo, edge || sample(g, la, lo) !== sample(g, la, lo) || !(z < -20)];
+    })).filter((r) => r.some((pt) => !pt[2])),
+  }));
+}
+
+let loading = 0;
+async function refresh() {
+  const my = ++loading, p = PRODUCTS[S.prod];
+  status(`Loading ${p.name.toLowerCase()}…`);
+  try {
+    const jobs = [];
+    const add = (name, pr) => jobs.push(pr.catch((e) => { console.error(name, e); e.message = `${name}: ${e.message}`; throw e; }));
+    // Draw each piece the moment it lands instead of waiting for everything
+    const partial = () => { if (my !== loading) return; autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate(); };
+    if (!covers(S.data.bathy, 1 / 240, 620)) add('depth chart', loadBathy().then(() => { if (my === loading) { renderRelief(); chart.draw(); } }));
+    const fresh = (k) => { const pp = PRODUCTS[k]; return covers(S.data[k], pp.res, pp.cells) && (!pp.family || S.data[k].src === S.src[pp.family]); };
+    if (!p.computed && !fresh(S.prod)) add(p.name.toLowerCase(), loadGrid(S.prod).then((g) => { S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
+    else if (p.sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
+    if (S.prod === 'ftle') add('currents', loadCurrents(6).then((c) => { S.data.cur6 = c; S.data.ftle = computeFtle(c); }));
+    const needSsh = (S.ov.rings && ['ssh', 'sst', 'goes', 'ftle', 'cur', 'sss'].includes(S.prod)) || S.prod === 'fish';
+    if (needSsh && S.prod !== 'ssh' && !covers(S.data.ssh, 0.25, 999)) add('eddy rings', loadGrid('ssh').then((g) => { S.data.ssh = g; }));
+    const needCur = S.ov.cur || S.prod === 'cur' || S.prod === 'fish';
+    if (S.prod === 'fish' && !covers(S.data.goes, PRODUCTS.goes.res, PRODUCTS.goes.cells)) jobs.push(loadGrid('goes').then((g) => { S.data.goes = g; }).catch((e) => console.warn('hourly SST for fish', e)));
+    if (needCur && !covers(S.data.curb, 0.25, 999)) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
+    if (needCur && !covers(S.data.hf, 0.055, 320)) jobs.push(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; }));
+    if (needCur && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) jobs.push(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; }));
+    if (S.prod === 'fish') {
+      if (!covers(S.data.sst, PRODUCTS.sst.res, PRODUCTS.sst.cells) || S.data.sst?.src !== S.src.sst) add('water temp', loadGrid('sst').then((g) => { S.data.sst = g; }));
+      if (!covers(S.data.chl, PRODUCTS.chl.res, PRODUCTS.chl.cells) || S.data.chl?.src !== S.src.chl) jobs.push(loadGrid('chl').then((g) => { S.data.chl = g; }).catch(() => {}));
+    } else if (S.prod !== 'sst' && !S.data.sst) jobs.push(loadGrid('sst').then((g) => { S.data.sst = g; }).catch(() => {}));
+    const res = await Promise.allSettled(jobs);
+    if (my !== loading) return;
+    const fail = res.find((r) => r.status === 'rejected');
+    if (S.prod === 'cur') buildCurGrid();
+    if (S.prod === 'fish') buildFish();
+    $('fishPanel').hidden = S.prod !== 'fish' || S.fishCollapsed;
+    if (needSsh && S.data.ssh && S.prod !== 'fish') buildRings(S.data.ssh); else S.geo.rings = [];
+    autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate();
+    const gg = S.data[S.prod];
+    if (fail) status(`Some data didn't load (${fail.reason.message}).`, true);
+    else if (p.hourly && gg && gg.anyPct < 3) status('Clouds: GOES has had almost no clear view here in the last 24 hours. Use daily Temp.', true);
+    else if (p.hourly && gg) status(`${gg.clearPct}% clear this hour · rest filled from the last 24 h`);
+    else if (S.prod === 'mld' && gg && !gg.via && viewValues(gg).length < 0.3 * gg.nx * gg.ny * 0.5) status('NOAA only computes mixed layer depth in warm (Gulf Stream) water; blank elsewhere.', true);
+    else status('');
+  } catch (e) {
+    console.error(e); if (my === loading) status(`Couldn't load data (${e.message}).`, true);
+  }
+}
+
+// ---------- UI ----------
+function updateDate() {
+  const p = PRODUCTS[S.prod], g = S.data[S.prod];
+  $('datebar').classList.toggle('static', S.prod === 'bottom');
+  if (S.prod === 'bottom') { $('dLabel').textContent = 'Seafloor · NOAA ETOPO 2022'; return; }
+  // Where to fish is "as of now": label it with the newest hourly temp and current it used, not yesterday's daily map
+  if (S.prod === 'fish' && !S.date) {
+    const th = S.data.goes?.times?.slice(-1)[0], tc = S.data.hf?.time;
+    const t = (iso) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', timeZone: 'America/New_York' });
+    $('dLabel').textContent = `Now · temps ${th ? t(th) : 'daily'}${tc ? ` · current ${t(tc)}` : ''} ET`;
+    $('dNext').disabled = true; $('dLatest').hidden = true; return;
+  }
+  if (p.hourly) {
+    const t = g?.times?.length ? g.times[g.times.length - 1] : S.hour;
+    $('dLabel').textContent = t ? niceHour(t) : 'Latest';
+    $('dNext').disabled = !S.hour || (S.latestHour && S.hour >= S.latestHour);
+    $('dLatest').hidden = !S.hour;
+  } else {
+    const shown = g?.date || S.date;
+    $('dLabel').textContent = shown ? nice(shown) : 'Latest';
+    $('dNext').disabled = !S.date;
+    $('dLatest').hidden = !S.date;
+  }
+}
+function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'fish']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
+
+// ---------- Chart picker: thumbnails of every source x day for the current view ----------
+const PK = { fam: 'sst', items: [], token: 0 };
+function pickerItems(fam) {
+  const today = isoDate(new Date()), items = [];
+  if (fam === 'goes') {
+    const end = S.latestHour || hourAdd(new Date().toISOString(), -5);
+    for (let h = 0; h < 12; h++) { const t = hourAdd(end, -h); items.push({ fam, key: 'goes', t, label: 'GOES-19 hourly', when: niceHour(t), s: { host: 'aoml', id: 'goes19SSThourly', v: 'sst', res: 0.02, asc: true } }); }
+    return items;
+  }
+  const days = fam === 'sst' ? 4 : 7;
+  for (const [key, s] of Object.entries(SRC[fam])) {
+    for (let d = 1; d <= days; d++) {
+      if (key === 'dineof' && d > 1) break;      // gap-filled: just the latest blend
+      const day = addDays(today, -d);
+      items.push({ fam, key, day: key === 'dineof' ? null : day, t: key === 'dineof' ? null : `${day}T${s.t}`, label: s.label, who: s.who, when: key === 'dineof' ? 'Latest' : nice(day), s });
+    }
+  }
+  return items;
+}
+function openPicker(fam = PK.fam) {
+  PK.fam = fam; const my = ++PK.token;
+  $('picker').hidden = false;
+  document.querySelectorAll('#pkTabs button').forEach((b) => b.classList.toggle('on', b.dataset.fam === fam));
+  const b = map.getBounds(), view = { s: +b.getSouth().toFixed(2), n: +b.getNorth().toFixed(2), w: +b.getWest().toFixed(2), e: +b.getEast().toFixed(2) };
+  const aspect = (merc(view.n) - merc(view.s)) / ((view.e - view.w) * Math.PI / 180);
+  PK.items = pickerItems(fam); PK.view = view; PK.aspect = aspect;
+  const grid = $('pkGrid'); grid.innerHTML = ''; PK.rng = null;
+  const vkey = [view.s, view.n, view.w, view.e].map((x) => Math.round(x * 2) / 2).join(',');
+  // Only fetch what you can see (plus a screen ahead); fast servers get more parallel requests than slow ones
+  const queue = [], busy = { cw: 0, other: 0 };
+  const pump = () => {
+    if (my !== PK.token) return;
+    for (let i = 0; i < queue.length; i++) {
+      const it = queue[i], slow = !it.s.cm && it.s.host === 'cw';
+      if (slow ? busy.cw >= 2 : busy.other >= 6) continue;
+      queue.splice(i--, 1); slow ? busy.cw++ : busy.other++;
+      loadThumb(it, vkey).finally(() => { slow ? busy.cw-- : busy.other--; pump(); });
+    }
+  };
+  const io = new IntersectionObserver((ents) => {
+    for (const e of ents) if (e.isIntersecting) { io.unobserve(e.target); const it = e.target._it; if (!it.started) { it.started = true; queue.push(it); } }
+    // fast sources first
+    queue.sort((a, b) => (a.s.cm ? 0 : a.s.host === 'cw' ? 2 : 1) - (b.s.cm ? 0 : b.s.host === 'cw' ? 2 : 1));
+    pump();
+  }, { root: $('picker'), rootMargin: '400px' });
+  for (const it of PK.items) {
+    const card = document.createElement('button'); card.className = 'pk';
+    card.innerHTML = `<canvas width="160" height="${Math.round(160 * aspect)}"></canvas><b>${it.label}</b><small>${it.when}${it.who ? ` · ${it.who}` : ''}</small><em>loading…</em>`;
+    card.onclick = () => choosePicked(it);
+    card._it = it; it.el = card; grid.appendChild(card); io.observe(card);
+  }
+}
+const THUMBS = new Map();   // thumbnails already fetched this session, so reopening the picker is instant
+// ---------- Prefetched charts (hourly GitHub Action -> live/*.png on the CDN) ----------
+// Where the hourly snapshots live: GitHub Pages in production, the local folder when testing
+const LIVE_BASE = /^(localhost|127\.)/.test(location.hostname) ? 'live/' : 'https://tsudbrinkdmw.github.io/breakline/live/';
+let PRE = null;
+async function loadManifest() {
+  try { const r = await fetch(`${LIVE_BASE}manifest.json?t=${Math.floor(Date.now() / 600000)}`); if (r.ok) PRE = await r.json(); } catch (e) { /* none yet */ }
+}
+const preReady = loadManifest(); setInterval(loadManifest, 15 * 60 * 1000);
+// which prefetch box holds this window (all of it)
+function preZone(v) {
+  for (const [k, b] of Object.entries(PRE?.zones || PRE_BOX)) if (v.s >= b.s && v.n <= b.n && v.w >= b.w && v.e <= b.e) return k;
+  return null;
+}
+function preEntry(id) { return PRE?.items?.[id] || null; }
+// newest prefetched day for a source in a zone
+function preLatest(zone, fam, key) {
+  const pre = `${zone}/${fam}/${key}/`, days = Object.keys(PRE?.items || {}).filter((k) => k.startsWith(pre) && !PRE.items[k].none).sort();
+  return days.length ? days[days.length - 1] : null;
+}
+const PRE_CACHE = new Map();
+async function preGrid(entry, conv) {
+  if (PRE_CACHE.has(entry.file)) return PRE_CACHE.get(entry.file);
+  const r = await fetch(`${LIVE_BASE}${entry.file}`); if (!r.ok) throw new Error('prefetched file missing');
+  const bmp = await createImageBitmap(await r.blob()), c = document.createElement('canvas'); c.width = entry.nx; c.height = entry.ny;
+  const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  const px = ctx.getImageData(0, 0, entry.nx, entry.ny).data, [lo0, hi0, log] = PRE.enc[entry.enc];
+  const lo = log ? Math.log10(lo0) : lo0, hi = log ? Math.log10(hi0) : hi0, nx = entry.nx, ny = entry.ny, v = new Float32Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {         // PNG is north-up; grid rows run south->north
+    const q8 = px[((ny - 1 - j) * nx + i) * 4];
+    if (!q8) { v[j * nx + i] = NaN; continue; }
+    const x = lo + (q8 - 1) / 254 * (hi - lo); v[j * nx + i] = conv(log ? 10 ** x : x);
+  }
+  const g = { nx, ny, v, lat0: entry.lat0 + (ny - 1) * entry.dlat, dlat: -entry.dlat, lon0: entry.lon0, dlon: entry.dlon, times: [entry.time], date: entry.time.slice(0, 10), pre: true };
+  PRE_CACHE.set(entry.file, g);
+  return g;
+}
+// For the main chart: use the prefetched grid when zoomed out over a prefetched zone
+async function preForView(prod) {
+  if (map.getZoom() > 8) return null;
+  await preReady; if (!PRE) return null;
+  const b = map.getBounds(), zone = preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
+  const p = PRODUCTS[prod];
+  if (prod === 'goes') {
+    // newest-clear-pixel fill across the prefetched hours, same as live
+    const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort();
+    const upto = S.hour ? hours.filter((k) => k.split('/')[2] <= S.hour) : hours;
+    const pick = upto.slice(-24); if (!pick.length) return null;
+    const grids = await Promise.all(pick.map((k) => preGrid(PRE.items[k], SST_C)));
+    const last = grids[grids.length - 1], v = last.v.slice();
+    for (let k = grids.length - 2; k >= 0; k--) { const sl = grids[k].v; for (let i = 0; i < v.length; i++) if (v[i] !== v[i]) v[i] = sl[i]; }
+    let fresh = 0, any = 0; for (let i = 0; i < v.length; i++) { if (last.v[i] === last.v[i]) fresh++; if (v[i] === v[i]) any++; }
+    if (!S.hour) S.latestHour = pick[pick.length - 1].split('/')[2];
+    return { ...last, v, times: pick.map((k) => k.split('/')[2]), clearPct: Math.round(100 * fresh / v.length), anyPct: Math.round(100 * any / v.length), win: { ...PRE_BOX[zone], pre: true, stride: 1 } };
+  }
+  if (!p.family) return null;
+  const key = S.src[p.family], s = curSrc(p.family); if (s.cm) return null;
+  const id = S.date ? `${zone}/${p.family}/${key}/${S.date}` : (key === 'dineof' ? `${zone}/chl/dineof/latest` : preLatest(zone, p.family, key));
+  const e = id && preEntry(id); if (!e || e.none) return null;
+  const g = await preGrid(e, p.family === 'chl' ? CHL : SST_C);
+  return { ...g, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, src: key };
+}
+
+async function loadThumb(it, vkey) {
+  const fam = PK.fam, view = PK.view, conv = fam === 'chl' ? CHL : SST_C, key = `${it.key}|${it.day || it.t}|${vkey}`;
+  try {
+    await preReady;
+    const zone = preZone(view), pid = zone && (it.fam === 'goes' ? `${zone}/goes/${it.t}` : `${zone}/${it.fam}/${it.key}/${it.key === 'dineof' ? 'latest' : it.day}`);
+    const pe = pid && preEntry(pid);
+    if (THUMBS.has(key)) it.g = THUMBS.get(key);
+    else if (pe && pe.none) { it.el.querySelector('em').textContent = pe.cloud ? 'all cloud' : 'no pass that day'; it.el.classList.add('none'); return; }
+    else if (pe) it.g = await preGrid(pe, conv);
+    else if (it.s.cm) { const g = await loadCmems(CM[it.s.cm], view, it.day, 64); it.g = { ...g, v: g.v.map((x) => (x === x ? conv(x) : x)) }; }
+    else {
+      const span = Math.max(view.n - view.s, view.e - view.w), stride = Math.max(1, Math.ceil(span / it.s.res / 70));
+      it.g = toGrid(parseAsc(await getText(srcUrl(it.s, { ...view, stride }, it.t))), it.s.v, conv);
+      // ERDDAP snaps to the nearest date; if that isn't the day asked for, there was no pass that day
+      if (it.day && it.g.date && it.g.date !== it.day) { it.g = null; it.el.querySelector('em').textContent = 'no pass that day'; it.el.classList.add('none'); return; }
+    }
+    THUMBS.set(key, it.g);
+    drawThumbs(it);
+  } catch (e) { it.el.querySelector('em').textContent = /not published|404/.test(e.message) ? 'not available' : e.message.replace(/ \(coastwatch\.noaa\.gov\)/, ''); it.el.classList.add('none'); }
+}
+// Draw one new thumbnail; redraw them all only when the shared color range has to widen
+function drawThumbs(only) {
+  const fam = PK.fam === 'goes' ? 'sst' : PK.fam, p = PRODUCTS[fam];
+  if (only) {
+    const v = Array.from(only.g.v).filter((x) => x === x).sort((a, b) => a - b);
+    if (!v.length) { only.el.querySelector('em').textContent = 'all cloud'; only.el.classList.add('cloudy'); return; }
+    const r = [v[Math.floor(v.length * 0.02)], v[Math.floor(v.length * 0.98)]];
+    if (p.log) r[0] = Math.max(0.02, r[0]);
+    const R = PK.rng;
+    if (!R) { PK.rng = r; return drawThumbsAll([only]); }
+    const span = p.log ? Math.log10(R[1] / R[0]) : R[1] - R[0];
+    const grow = p.log ? Math.max(Math.log10(R[0] / r[0]), Math.log10(r[1] / R[1])) : Math.max(R[0] - r[0], r[1] - R[1]);
+    if (grow > span * 0.15) { PK.rng = [Math.min(R[0], r[0]), Math.max(R[1], r[1])]; return drawThumbsAll(PK.items.filter((x) => x.g)); }
+    return drawThumbsAll([only]);
+  }
+  drawThumbsAll(PK.items.filter((x) => x.g));
+}
+function drawThumbsAll(list) {
+  const fam = PK.fam === 'goes' ? 'sst' : PK.fam, p = PRODUCTS[fam], lt = LUTS[fam], rng = PK.rng;
+  if (!rng) return;
+  const V = PK.view, y0 = merc(V.s), y1 = merc(V.n);
+  for (const it of list) {
+    if (!it.g) continue;
+    const cv = it.el.querySelector('canvas'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height, img = ctx.createImageData(W, H);
+    let water = 0, clear = 0;
+    for (let py = 0; py < H; py++) {
+      const lat = imerc(y1 - (py + 0.5) / H * (y1 - y0));
+      for (let px = 0; px < W; px++) {
+        const lon = V.w + (px + 0.5) / W * (V.e - V.w), o = (py * W + px) * 4, z = sample(S.data.bathy, lat, lon);
+        if (z === z && z >= 0) { img.data.set([43, 47, 51, 255], o); continue; }
+        water++;
+        const v = sample(it.g, lat, lon);
+        if (v !== v) { img.data.set([20, 30, 44, 255], o); continue; }
+        clear++;
+        const i = Math.round(clamp(tOf(p, v, rng), 0, 1) * 255) * 3; img.data.set([lt[i], lt[i + 1], lt[i + 2], 255], o);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const pct = water ? Math.round(100 * clear / water) : 0;
+    it.el.querySelector('em').textContent = it.key === 'dineof' ? `base ${nice(it.g.date)} + newer clear passes on load` : `${pct}% clear`;
+    it.el.classList.toggle('cloudy', pct < 25);
+  }
+  $('pkScale').textContent = `Same color scale on every thumbnail: ${fmtTick(p, rng[0])} to ${fmtTick(p, rng[1])} ${p.unit}`;
+}
+function choosePicked(it) {
+  if (it.el.classList.contains('none')) return;
+  $('picker').hidden = true; PK.token++;
+  if (it.fam === 'goes') { S.prod = 'goes'; S.hour = it.t; }
+  else { S.prod = it.fam; S.src[it.fam] = it.key; store.set('src2', S.src); S.date = it.key === 'dineof' || it.latest ? null : it.day; }
+  store.set('prod', S.prod); S.auto = true;
+  document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === S.prod));
+  invalidateTimeData(); refresh();
+}
+$('btnPick').onclick = () => openPicker(['chl'].includes(S.prod) ? 'chl' : S.prod === 'goes' ? 'goes' : 'sst');
+$('pkClose').onclick = () => { $('picker').hidden = true; PK.token++; };
+document.querySelectorAll('#pkTabs button').forEach((b) => { b.onclick = () => openPicker(b.dataset.fam); });
+
+// Hot-spot panel controls
+// Species list follows the ocean on screen; each ocean remembers its own last pick
+const spSel = $('species');
+let spOcean = null;
+// The ocean follows your home port (a Pacific port only gets Pacific fish); no port set -> what's on screen
+function fishOcean() {
+  const hp2 = PORTS.find((x) => x[0] === S.home);
+  if (hp2) return oceanAt(hp2[1], hp2[2]);
+  const c = map.getCenter(); return oceanAt(c.lat, c.lng);
+}
+function fillSpecies() {
+  const ocean = fishOcean();
+  if (ocean === spOcean) return false;
+  spOcean = ocean; spSel.innerHTML = '';
+  const og = document.createElement('optgroup'); og.label = ocean === 'pac' ? 'Pacific' : 'Atlantic, Gulf & Caribbean';
+  for (const [k, v] of speciesFor(ocean)) { const o = document.createElement('option'); o.value = k; o.textContent = v.label; og.appendChild(o); }
+  spSel.appendChild(og);
+  const keep = store.get(`species_${ocean}`, ocean === 'pac' ? 'dorado' : S.species);
+  S.species = SPECIES[keep] && speciesFor(ocean).some(([k]) => k === keep) ? keep : speciesFor(ocean)[0][0];
+  spSel.value = S.species;
+  return true;
+}
+fillSpecies();
+map.on('moveend', () => { if (fillSpecies() && S.prod === 'fish') { buildFish(); autoRange(true); renderRaster(); drawLegend(); chart.draw(); } });
+spSel.onchange = () => { S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); buildFish(); autoRange(true); renderRaster(); drawLegend(); chart.draw(); };
+$('maxRun').value = S.maxRun; $('maxRunVal').textContent = `${S.maxRun} nm`;
+$('maxRun').oninput = () => { S.maxRun = +$('maxRun').value; $('maxRunVal').textContent = `${S.maxRun} nm`; store.set('maxRun', S.maxRun); };
+$('maxRun').onchange = () => { buildFish(); chart.draw(); };
+$('depMin').value = S.fishDepth[0] ?? ''; $('depMax').value = S.fishDepth[1] ?? '';
+const depChange = () => {
+  const v = (x) => (x.value === '' ? null : Math.max(0, +x.value));
+  S.fishDepth = [v($('depMin')), v($('depMax'))]; store.set('fishDepth', S.fishDepth); buildFish(); chart.draw();
+};
+$('depMin').onchange = depChange; $('depMax').onchange = depChange;
+function stepTime(dir) {
+  const p = PRODUCTS[S.prod], g = S.data[S.prod];
+  if (p.hourly) {
+    const cur = S.hour || g?.times?.[g.times.length - 1] || S.latestHour; if (!cur) return;
+    const next = hourAdd(cur, dir); S.hour = S.latestHour && next >= S.latestHour ? null : next;
+  } else {
+    const cur = S.date || g?.date; if (!cur) return;
+    const next = addDays(cur, dir); S.date = next >= isoDate(new Date()) ? null : next;
+  }
+  invalidateTimeData(); refresh();
+}
+$('dPrev').onclick = () => stepTime(-1);
+$('dNext').onclick = () => stepTime(1);
+$('dLatest').onclick = () => { S.date = null; S.hour = null; invalidateTimeData(); refresh(); };
+
+function setFishCollapsed(c) {
+  S.fishCollapsed = c; $('fishPanel').hidden = c || S.prod !== 'fish';
+  document.querySelector('.prod[data-prod=fish]')?.classList.toggle('collapsed', c);
+}
+$('fishClose').onclick = () => setFishCollapsed(true);
+document.querySelectorAll('.prod').forEach((b) => {
+  b.classList.toggle('active', b.dataset.prod === S.prod);
+  b.onclick = () => {
+    // tapping Where to fish again just tucks the list away; the numbered spots stay on the chart
+    if (b.dataset.prod === 'fish' && S.prod === 'fish') { setFishCollapsed(!S.fishCollapsed); return; }
+    if (b.dataset.prod === 'fish') S.fishCollapsed = false;
+    S.prod = b.dataset.prod; store.set('prod', S.prod); S.auto = true;
+    document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x === b));
+    if (reliefLayer) { map.removeLayer(reliefLayer); reliefLayer = null; }
+    refresh();
+  };
+});
+
+function togglePanel(id, btn) {
+  const el = $(id), open = el.hidden;
+  ['layers', 'wpts'].forEach((x) => { $(x).hidden = true; });
+  ['btnLayers', 'btnWpts'].forEach((x) => $(x).classList.remove('open'));
+  el.hidden = !open; btn.classList.toggle('open', open);
+}
+$('btnLayers').onclick = () => togglePanel('layers', $('btnLayers'));
+$('btnWpts').onclick = () => togglePanel('wpts', $('btnWpts'));
+
+document.querySelectorAll('[data-ov]').forEach((cb) => {
+  cb.checked = !!S.ov[cb.dataset.ov];
+  cb.onchange = () => {
+    S.ov[cb.dataset.ov] = cb.checked; store.set('ov', S.ov);
+    if (['cur', 'rings'].includes(cb.dataset.ov) && cb.checked) refresh();
+    if (cb.dataset.ov === 'relief') renderRelief();
+    if (cb.dataset.ov === 'iso' && cb.checked && PRODUCTS[S.prod].sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
+    if (cb.dataset.ov === 'buoys') drawBuoys();
+    chart.draw();
+  };
+});
+// Slider reads "sensitivity": right = more breaks (lower threshold)
+const brkMin = 0.1, brkMax = 1.5;
+$('brkThr').value = brkMax + brkMin - S.brk; $('brkVal').textContent = `${S.brk.toFixed(2)}°F/nm`;
+$('brkThr').oninput = () => {
+  S.brk = +(brkMax + brkMin - +$('brkThr').value).toFixed(2); $('brkVal').textContent = `${S.brk.toFixed(2)}°F/nm`;
+  store.set('brk2', S.brk); buildBreaks(); chart.draw();
+};
+
+const gm = $('gridMode'); gm.value = S.grid;
+const showTdRow = () => { $('tdRow').style.display = S.grid === 'td' || S.grid === 'both' ? '' : 'none'; };
+showTdRow();
+gm.onchange = () => { S.grid = gm.value; store.set('grid', S.grid); showTdRow(); chart.draw(); };
+const tp = $('tdPair');
+for (const [k, l] of [['XY', 'X & Y — Nantucket / Carolina Beach (26xxx / 42xxx)'], ['WX', 'W & X — Caribou / Nantucket (13xxx / 26xxx)'],
+  ['WY', 'W & Y — Caribou / Carolina Beach (13xxx / 42xxx)'], ['YZ', 'Y & Z — Carolina Beach / Dana (42xxx / 59xxx)'], ['XZ', 'X & Z — Nantucket / Dana']]) {
+  const o = document.createElement('option'); o.value = k; o.textContent = l; tp.appendChild(o);
+}
+tp.value = S.tdPair;
+tp.onchange = () => { S.tdPair = tp.value; store.set('tdPair', S.tdPair); chart.draw(); };
+$('tdOffA').value = S.tdOff[0] || ''; $('tdOffB').value = S.tdOff[1] || '';
+const offChange = () => { S.tdOff = [+$('tdOffA').value || 0, +$('tdOffB').value || 0]; store.set('tdOff', S.tdOff); chart.draw(); };
+$('tdOffA').onchange = offChange; $('tdOffB').onchange = offChange;
+let tdMarker = null;
+$('tdGo').onclick = () => {
+  const a = parseFloat($('tdA').value), b = parseFloat($('tdB').value), [sa, sb] = pair();
+  if (!(a > 0 && b > 0)) return;
+  const c = map.getCenter(), pos = Loran.fromTd(a - (+S.tdOff[0] || 0), sa, b - (+S.tdOff[1] || 0), sb, [c.lat, c.lng]);
+  if (!pos) { status('Those TDs don\'t resolve to a spot near here.', true); return; }
+  if (tdMarker) map.removeLayer(tdMarker);
+  tdMarker = L.circleMarker(pos, { radius: 8, color: '#ffd23f', weight: 3, fillOpacity: 0 }).addTo(map);
+  map.setView(pos, Math.max(map.getZoom(), 9));
+  openReading(L.latLng(pos[0], pos[1]), `TD ${a} / ${b}`);
+};
+
+const hp = $('homePort');
+PORTS.forEach(([n]) => { const o = document.createElement('option'); o.value = o.textContent = n; hp.appendChild(o); });
+hp.value = S.home;
+const homeChanged = () => {
+  if (fillSpecies() && S.prod === 'fish') { buildFish(); autoRange(true); renderRaster(); drawLegend(); }
+  else if (S.prod === 'fish') { buildFish(); }
+  chart.draw();
+};
+hp.onchange = () => { S.home = hp.value; store.set('home', S.home); homeChanged(); };
+
+// Zone switcher: jump the view and set that zone's home port (for range/bearing and the hot-spot run limit)
+const zs = $('zone');
+const ZONE_GROUPS = [['US East Coast', ['ne', 'ma', 'se', 'fl']], ['Caribbean', ['cancun', 'puntacana', 'stlucia']],
+  ['Mexico & Central America (Pacific)', ['cabo', 'chiapas', 'cr', 'crs']]];
+for (const [label, keys] of ZONE_GROUPS) {
+  const og = document.createElement('optgroup'); og.label = label;
+  for (const k of keys) { const o = document.createElement('option'); o.value = k; o.textContent = ZONES[k].label; og.appendChild(o); }
+  zs.appendChild(og);
+}
+zs.onchange = () => {
+  const z = ZONES[zs.value]; if (!z) return;
+  S.home = z.home; store.set('home', S.home); hp.value = S.home; fillSpecies();
+  map.fitBounds(z.view); zs.value = '';
+};
+
+let moveTimer;
+map.on('moveend', () => {
+  store.set('view', [map.getCenter().lat, map.getCenter().lng]); store.set('zoom', map.getZoom());
+  clearTimeout(moveTimer);
+  moveTimer = setTimeout(() => {
+    const p = PRODUCTS[S.prod];
+    const need = !covers(S.data.bathy, 1 / 240, 620) || (!p.computed && !covers(S.data[S.prod], p.res, p.cells)) || ['ftle', 'cur', 'fish'].includes(S.prod) ||
+      ((S.ov.cur || S.prod === 'cur') && !hfCovers());
+    if (need) { refresh(); return; }
+    const before = JSON.stringify(S.range[S.prod]); autoRange();
+    if (JSON.stringify(S.range[S.prod]) !== before) renderRaster();
+    drawLegend(); chart.draw();
+  }, 450);
+});
+
+// Readout
+function readings(lat, lon) {
+  const r = [], D = S.data;
+  const add = (k, g, f) => { const v = sample(g, lat, lon); if (v === v) r.push([k, f(v)]); };
+  add('Water temp', D.sst, PRODUCTS.sst.fmt);
+  add('Hourly temp', D.goes, PRODUCTS.goes.fmt);
+  add('Chlorophyll', D.chl, PRODUCTS.chl.fmt);
+  add('Sea height', D.ssh, PRODUCTS.ssh.fmt);
+  add('Mixed layer', D.mld, PRODUCTS.mld.fmt);
+  add('Front strength', D.ftle, PRODUCTS.ftle.fmt);
+  add('Salinity', D.sss, PRODUCTS.sss.fmt);
+  add('Hot-spot score', D.fish, PRODUCTS.fish.fmt);
+  const z = sample(D.bathy, lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : `${Math.round(-z / FATHOM).toLocaleString()} fm`]);
+  const c = curAt(lat, lon);
+  if (c) r.push(['Current', `${(Math.hypot(c[0], c[1]) * 1.94384).toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`]);
+  for (const [d, w] of wrecksNear(lat, lon)) {
+    const kind = w[2] === 'W' ? 'Wreck' : w[2] === 'F' ? 'Fish haven' : 'Obstruction';
+    r.push([kind, `${w[5] ? `${w[5]} · ` : ''}${w[3] || ''}${w[4] != null ? ` · ${Math.round(w[4] * 3.28084)} ft over` : ''} · ${d.toFixed(2)} nm`]);
+  }
+  if (inLoran(lat, lon)) r.push([`Loran ${S.tdPair[0]}/${S.tdPair[1]}`, fmtTd(lat, lon)]);
+  const home = PORTS.find((x) => x[0] === S.home);
+  if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
+  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0].replace(' Inlet', '')}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
+  return r;
+}
+
+map.on('mousemove', (e) => {
+  const { lat, lng } = e.latlng, p = PRODUCTS[S.prod], g = S.data[S.prod];
+  const val = S.prod === 'bottom' ? NaN : sample(g, lat, lng), z = sample(S.data.bathy, lat, lng), home = PORTS.find((x) => x[0] === S.home);
+  const pos = S.grid === 'td' && inLoran(lat, lng) ? fmtTd(lat, lng) : fmtLL(lat, lng);
+  const parts = [`<span class="v">${pos}</span>`];
+  if (val === val) parts.push(`<span class="v">${p.fmt(val)}</span>`);
+  if (z === z && z < 0) parts.push(`${Math.round(-z / FATHOM).toLocaleString()} fm`);
+  if (S.grid === 'both' && inLoran(lat, lng)) parts.push(`TD ${fmtTd(lat, lng)}`);
+  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lng]); parts.push(`${d.toFixed(1)} nm @ ${Math.round(b)}°T`); }
+  $('readout').innerHTML = parts.join('<span class="m">·</span>');
+});
+
+// ---------- My location (phone GPS) ----------
+// Stays on the device: the position is only used to draw the dot and measure range/bearing.
+const ME = { pos: null, watch: null, follow: false, dot: null, ring: null, layer: L.layerGroup().addTo(map) };
+const LocateCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const b = L.DomUtil.create('button', 'locate-btn');
+    b.title = 'Show my location'; b.setAttribute('aria-label', 'Show my location'); b.innerHTML = '<span></span>';
+    L.DomEvent.disableClickPropagation(b);
+    b.onclick = () => {
+      if (ME.watch == null) startLocate();
+      else if (!ME.follow) { ME.follow = true; if (ME.pos) map.setView(ME.pos, Math.max(map.getZoom(), 9)); }
+      else stopLocate();
+      paintLocate();
+    };
+    ME.btn = b; return b;
+  },
+});
+new LocateCtl().addTo(map);
+function paintLocate() { if (!ME.btn) return; ME.btn.classList.toggle('on', ME.watch != null); ME.btn.classList.toggle('follow', ME.follow); ME.btn.title = ME.watch == null ? 'Show my location' : ME.follow ? 'Stop tracking' : 'Center on me'; }
+function startLocate() {
+  if (!navigator.geolocation) { status('This device has no location service.', true); return; }
+  ME.follow = true; status('Finding your location…');
+  ME.watch = navigator.geolocation.watchPosition(onFix, (e) => {
+    if (e.code === 1) { status(''); stopLocate(); showLocHelp(); return; }
+    status(e.code === 3 ? 'Still looking for a GPS fix… (works best outside, away from cover)' : 'Can\'t get a location fix right now.', true);
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+}
+// The browser remembers a "Don't Allow" per site, so the fix has to happen in settings; show the steps for this device
+function showLocHelp() {
+  const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1), android = /Android/.test(ua);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  $('locSteps').innerHTML = ios ? `<ol>
+      <li><b>Settings</b> → <b>Privacy &amp; Security</b> → <b>Location Services</b>: turn it <b>On</b>.</li>
+      <li>Same screen, scroll to <b>Safari Websites</b> → <b>While Using the App</b>.</li>
+      ${standalone ? '<li>Open breakline-ihfj.netlify.app in <b>Safari</b> once,' : '<li>Back here in Safari,'} tap <b>aA</b> in the address bar → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Reload, then tap the locate button again.</li></ol>`
+    : android ? `<ol>
+      <li>Tap the icon left of the web address → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Make sure <b>Location</b> is on in your quick settings (swipe down from the top).</li>
+      <li>Reload, then tap the locate button again.</li></ol>`
+    : `<ol>
+      <li>Click the icon left of the web address → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Reload, then click the locate button again.</li></ol>`;
+  $('locHelp').hidden = false;
+}
+$('locClose').onclick = () => { $('locHelp').hidden = true; };
+$('locRetry').onclick = () => { $('locHelp').hidden = true; startLocate(); paintLocate(); };
+function stopLocate() {
+  if (ME.watch != null) navigator.geolocation.clearWatch(ME.watch);
+  ME.watch = null; ME.follow = false; ME.pos = null; ME.layer.clearLayers(); ME.dot = ME.ring = null; paintLocate();
+}
+function onFix(p) {
+  const { latitude: la, longitude: lo, accuracy, heading, speed } = p.coords, first = !ME.pos;
+  ME.pos = [la, lo]; ME.speed = speed; ME.heading = heading;
+  if (!ME.dot) {
+    ME.ring = L.circle(ME.pos, { radius: accuracy, color: '#35c2ff', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(ME.layer);
+    ME.dot = L.marker(ME.pos, { icon: L.divIcon({ className: '', html: '<div class="me-dot"><i></i></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(ME.layer);
+  } else { ME.dot.setLatLng(ME.pos); ME.ring.setLatLng(ME.pos).setRadius(accuracy); }
+  const arrow = ME.dot.getElement()?.querySelector('i');
+  // the teardrop's point sits at the bottom-left corner (compass 225°), so turn it to the course over ground
+  if (arrow) arrow.style.transform = heading != null && speed > 0.5 ? `rotate(${heading - 225}deg)` : '';
+  arrow?.classList.toggle('moving', heading != null && speed > 0.5);
+  if (ME.follow) map.setView(ME.pos, first ? Math.max(map.getZoom(), 9) : map.getZoom(), { animate: !first });
+  if (first) status('');
+  paintLocate();
+}
+map.on('dragstart', () => { if (ME.follow) { ME.follow = false; paintLocate(); } });
+
+function openReading(latlng, title) {
+  const { lat, lng } = latlng;
+  const rows = readings(lat, lng).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const html = `<div class="pp"><div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
+    <div class="save"><input id="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button id="ppSave">Save</button></div></div>`;
+  const pop = L.popup({ maxWidth: 320 }).setLatLng(latlng).setContent(html).openOn(map);
+  setTimeout(() => {
+    const btn = document.getElementById('ppSave'); if (!btn) return;
+    btn.onclick = () => {
+      const name = (document.getElementById('ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
+      const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
+      S.wpts.push({ name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
+        sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}` });
+      saveWpts(); map.closePopup(pop);
+    };
+  }, 0);
+}
+// ---------- Measure: tap points to get leg + total distance (nm) and bearings ----------
+const MEAS = { on: false, pts: [], layer: L.layerGroup().addTo(map) };
+const MeasureCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const b = L.DomUtil.create('button', 'locate-btn measure-btn');
+    b.title = 'Measure distance'; b.setAttribute('aria-label', 'Measure distance'); b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17 17 3l4 4L7 21z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2" stroke="currentColor" stroke-width="1.6"/></svg>';
+    L.DomEvent.disableClickPropagation(b);
+    b.onclick = () => { MEAS.on = !MEAS.on; if (!MEAS.on) clearMeasure(); b.classList.toggle('on', MEAS.on); $('measureBar').hidden = !MEAS.on; drawMeasure(); };
+    MEAS.btn = b; return b;
+  },
+});
+new MeasureCtl().addTo(map);
+function clearMeasure() { MEAS.pts = []; MEAS.layer.clearLayers(); drawMeasure(); }
+function drawMeasure() {
+  MEAS.layer.clearLayers();
+  const p = MEAS.pts; let total = 0;
+  if (p.length > 1) L.polyline(p, { color: '#000', weight: 5, opacity: 0.7, interactive: false }).addTo(MEAS.layer);
+  if (p.length > 1) L.polyline(p, { color: '#ffd23f', weight: 2.5, dashArray: '8 6', interactive: false }).addTo(MEAS.layer);
+  p.forEach((pt, i) => {
+    L.circleMarker(pt, { radius: 5, color: '#000', weight: 2, fillColor: '#ffd23f', fillOpacity: 1, interactive: false }).addTo(MEAS.layer);
+    if (i) {
+      const [d, b] = rangeBearing(p[i - 1], pt); total += d;
+      const mid = [(p[i - 1][0] + pt[0]) / 2, (p[i - 1][1] + pt[1]) / 2];
+      L.marker(mid, { interactive: false, icon: L.divIcon({ className: '', html: `<div class="meas-lbl">${d.toFixed(1)} nm · ${Math.round(b)}°T</div>`, iconSize: [0, 0] }) }).addTo(MEAS.layer);
+    }
+  });
+  const kts = 25;   // typical cruise; the run time is just a guide
+  $('measureTxt').innerHTML = !p.length ? 'Tap the chart to drop points' : p.length === 1 ? 'Tap another point'
+    : `<b>${total.toFixed(1)} nm</b> total · ${p.length - 1} leg${p.length > 2 ? 's' : ''} · ~${(total / kts).toFixed(1)} h at ${kts} kt`;
+}
+$('measureUndo').onclick = () => { MEAS.pts.pop(); drawMeasure(); };
+$('measureClear').onclick = () => clearMeasure();
+$('measureDone').onclick = () => { MEAS.on = false; clearMeasure(); MEAS.btn.classList.remove('on'); $('measureBar').hidden = true; };
+
+map.on('click', (e) => {
+  if (MEAS.on) { MEAS.pts.push([e.latlng.lat, e.latlng.lng]); drawMeasure(); return; }
+  openReading(e.latlng);
+});
+
+// Waypoints
+const wLayer = L.layerGroup().addTo(map);
+function saveWpts() { store.set('wpts', S.wpts); drawWpts(); }
+function drawWpts() {
+  wLayer.clearLayers();
+  const list = $('wList'); list.innerHTML = '';
+  $('wCount').textContent = S.wpts.length ? `(${S.wpts.length})` : '';
+  S.wpts.forEach((w, i) => {
+    L.marker([w.lat, w.lon], { icon: L.divIcon({ className: '', html: '<div class="wpt-icon"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) })
+      .bindTooltip(w.name, { permanent: true, direction: 'right', offset: [8, 0], className: 'wpt-label' }).addTo(wLayer);
+    const li = document.createElement('li');
+    li.innerHTML = `<b>${w.name.replace(/</g, '&lt;')}</b><small>${fmtLL(w.lat, w.lon)}<br>TD ${fmtTd(w.lat, w.lon)}${w.sst ? ` · ${w.sst}°F` : ''}${w.fm ? ` · ${w.fm} fm` : ''}</small><button title="Delete">&times;</button>`;
+    li.querySelector('b').onclick = () => map.setView([w.lat, w.lon], Math.max(map.getZoom(), 9));
+    li.querySelector('button').onclick = () => { S.wpts.splice(i, 1); saveWpts(); };
+    list.appendChild(li);
+  });
+}
+$('wClear').onclick = () => { if (S.wpts.length && confirm(`Delete all ${S.wpts.length} spots?`)) { S.wpts = []; saveWpts(); } };
+$('wGpx').onclick = () => {
+  const esc = (s) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  const body = S.wpts.map((w) => `  <wpt lat="${w.lat}" lon="${w.lon}"><name>${esc(w.name)}</name><desc>${esc([`TD ${fmtTd(w.lat, w.lon)}`, w.sst && `${w.sst}F`, w.fm && `${w.fm} fm`].filter(Boolean).join(', '))}</desc></wpt>`).join('\n');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Breakline" xmlns="http://www.topografix.com/GPX/1/1">\n${body}\n</gpx>\n`;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
+  a.download = `breakline-spots-${isoDate(new Date())}.gpx`; a.click();
+};
+
+if (matchMedia('(hover: none)').matches) $('readout').textContent = 'Tap the chart for a reading';
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
+
+// Optional timing (localStorage breakline.perf = 1): logs how long each heavy step takes to window.__perf
+if (store.get('perf', 0)) {
+  window.__perf = [];
+  const wrap = (name, f) => function (...a) {
+    const t = performance.now(), r = f.apply(this, a);
+    const done = () => window.__perf.push([name, Math.round(performance.now() - t)]);
+    if (r && typeof r.then === 'function') r.then(done, done); else done();
+    return r;
+  };
+  buildSstGeo = wrap('sst-geo', buildSstGeo); renderRaster = wrap('raster', renderRaster); renderRelief = wrap('relief', renderRelief);
+  getText = wrap('net:erddap', getText); loadCmems = wrap('net:copernicus', loadCmems); loadBathy = wrap('depth', loadBathy);
+  drawChart = wrap('chart', drawChart); buildRings = wrap('rings', buildRings); autoRange = wrap('autorange', autoRange);
+}
+chart = new Chart().addTo(map);
+drawWpts();
+refresh();
+window.__S = S; window.__map = map;
+})();

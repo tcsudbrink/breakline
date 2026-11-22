@@ -1,0 +1,1 @@
+{"nx": 1141, "ny": 691, "lat0": 23.00208333333333, "lon0": -97.99791666666667, "dlat": 0.03333333333333333, "dlon": 0.03333333333333333, "src": "NOAA ETOPO 2022 15s, every 8th sample (2 arc-min)", "format": "int16 LE meters, rows south->north"}

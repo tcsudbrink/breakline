@@ -1,0 +1,45 @@
+# Every hour: pull the slow NOAA charts for each zone and publish them to GitHub Pages
+# (https://<owner>.github.io/<repo>/live/), where the Breakline app loads them in about a second.
+name: prefetch
+
+on:
+  schedule:
+    - cron: "17 * * * *"      # hourly, off the top of the hour
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: prefetch
+  cancel-in-progress: false
+
+jobs:
+  prefetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy pillow
+      - name: Fetch charts (starts from what is already published)
+        env:
+          LIVE_SEED: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/live
+          PREFETCH_BUDGET_S: "2100"
+        run: |
+          mkdir -p site/live
+          python prefetch.py site/live
+          echo "<p>Breakline data. The app is at https://breakline-ihfj.netlify.app</p>" > site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
