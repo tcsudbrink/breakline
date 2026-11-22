@@ -45,6 +45,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 #dLabel { padding: 0 10px; font-weight: 600; min-width: 150px; text-align: center; white-space: nowrap; }
 #dLatest { padding: 0 12px; color: var(--muted) !important; }
 #datebar.static button { display: none; }
+#dLabel { cursor: pointer; }
+#dLabel::after { content: ' ▾'; font-size: 9px; color: var(--muted); }
+#datebar.static #dLabel::after { content: ''; }
+#datePick { position: absolute; left: 50%; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }
 #datebar.forecast { border-color: #b78cff; box-shadow: 0 0 0 1px #b78cff inset; }
 #datebar.forecast #dLabel { color: #e2d2ff; }
 #datebar.static #dLabel { padding: 6px 14px; }

@@ -311,10 +311,17 @@ async function getText(url) {
   for (const u of cands) {
     const parts = u.split('/'), name = parts[2], host = `${name}/${(parts[4] || parts[3] || '').split(/[.?]/)[0]}`;
     if (hostDown(host)) { last = new Error(`${HOST_NAME[name] || name} is down right now`); continue; }
-    for (let i = 0; i < 2; i++) {
+    // Old dates: NOAA has to pull the file from cold storage the first time (often 20-40 s), then it's quick.
+    // So for dated requests wait longer, retry, and don't count the slowness as the server being down.
+    const pinned = !/last/.test(decodeURIComponent(u));
+    for (let i = 0; i < (pinned ? 3 : 2); i++) {
       let r;
-      try { r = await fetchOnce(u, name === 'cw' || /nesdis/.test(host) ? 18000 : 25000); }
-      catch (e) { hostFail(host); last = new Error(`${HOST_NAME[name] || name} not responding`); break; }
+      try { r = await fetchOnce(u, pinned ? 45000 : name === 'cw' || /nesdis/.test(host) ? 18000 : 25000); }
+      catch (e) {
+        last = new Error(`${HOST_NAME[name] || name} not responding`);
+        if (pinned && i < 2) { status('Pulling an older date from NOAA\'s archive (first load can take ~30 s)…'); continue; }
+        hostFail(host); break;
+      }
       if (r.ok) {
         const t = await r.text();
         // ERDDAP writes the lat/lon axes last, so a proxy that cuts a slow response short leaves them off
@@ -984,6 +991,25 @@ const CM = {
   uo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/uo', min: -3, max: 3, res: 0.083, model: true },
   vo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/vo', min: -3, max: 3, res: 0.083, model: true },
 };
+// Archive ("multi-year") layers for dates older than each live layer keeps. nrtDays = rolling window the live
+// layer holds; nrtFrom = fixed first date of the live layer.
+const CM_HIST = {
+  chl_l4: { nrtDays: 7, layer: 'OCEANCOLOUR_GLO_BGC_L4_MY_009_104/cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D_202611/CHL', from: '1997-09-06' },
+  chl_l3: { nrtDays: 17, layer: 'OCEANCOLOUR_GLO_BGC_L3_MY_009_103/cmems_obs-oc_glo_bgc-plankton_my_l3-multi-4km_P1D_202611/CHL', from: '1997-09-04' },
+  sla: { nrtFrom: '2024-07-01', layer: 'SEALEVEL_GLO_PHY_L4_MY_008_047/cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D_202411/sla', from: '1993-01-01' },
+  ugos: { nrtFrom: '2024-07-01', layer: 'SEALEVEL_GLO_PHY_L4_MY_008_047/cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D_202411/ugos', from: '1993-01-01' },
+  vgos: { nrtFrom: '2024-07-01', layer: 'SEALEVEL_GLO_PHY_L4_MY_008_047/cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D_202411/vgos', from: '1993-01-01' },
+  mld: { nrtFrom: '2022-06-01', layer: 'GLOBAL_MULTIYEAR_PHY_001_030/cmems_mod_glo_phy_my_0.083deg_P1D-m_202311/mlotst', from: '1993-01-01' },
+  so: { nrtFrom: '2022-06-01', layer: 'GLOBAL_MULTIYEAR_PHY_001_030/cmems_mod_glo_phy_my_0.083deg_P1D-m_202311/so', from: '1993-01-01' },
+};
+function cmLayerFor(s, day) {
+  const key = Object.keys(CM).find((k) => CM[k] === s), h = key && CM_HIST[key];
+  if (!h || !day) return s.layer;
+  const d = day.slice(0, 10), liveFrom = h.nrtFrom || addDays(isoDate(new Date()), -h.nrtDays);
+  if (d >= liveFrom) return s.layer;
+  if (d < h.from) throw new Error(`no data before ${h.from}`);
+  return h.layer;
+}
 const cmStyle = (s) => `cmap:gray,range:${s.min}/${s.max}${s.log ? ',logScale' : ''}`;
 const cmTile = (s, z, x, y, day) => `${CMEMS}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${encodeURIComponent(s.layer)}&STYLE=${encodeURIComponent(cmStyle(s))}` +
   `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day.includes('T') ? day : `${day}T00:00:00Z`}`;
@@ -1019,6 +1045,7 @@ async function cmLatest(s) {
 async function loadCmems(s, win, day, target = 360) {
   const inv = await cmInverse();
   day = day || await cmLatest(s);
+  s = { ...s, layer: cmLayerFor(s, day) };     // older dates come from the archive layer
   const spanLon = win.e - win.w;
   let z = clamp(Math.ceil(Math.log2(360 * target / (256 * spanLon))), 2, 10);
   z = Math.min(z, clamp(Math.ceil(Math.log2(360 / (256 * s.res / 1.5))), 2, 10));   // no finer than the data
@@ -1315,7 +1342,7 @@ function buildFish() {
   for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
     const la = g.lat0 + j * g.dlat, lo = g.lon0 + i * g.dlon, k = j * g.nx + i;
     Td[k] = sample(sst, la, lo); dep[k] = sample(S.data.bathy, la, lo);
-    const h = sample(S.data.goes, la, lo);
+    const h = S.date ? NaN : sample(S.data.goes, la, lo);
     if (h === h) { T[k] = h; hourly[k] = 1; nh++; } else T[k] = Td[k];
     if (dep[k] < 0) nw++;
     const c = sample(S.data.chl, la, lo); if (c > 0) lchl[k] = Math.log10(c);
@@ -1693,7 +1720,7 @@ async function refresh() {
     const needSsh = (S.ov.rings && ['ssh', 'sst', 'goes', 'ftle', 'cur', 'sss'].includes(S.prod)) || S.prod === 'fish';
     if (needSsh && S.prod !== 'ssh' && !covers(S.data.ssh, 0.25, 999)) add('eddy rings', loadGrid('ssh').then((g) => { S.data.ssh = g; }));
     const needCur = S.ov.cur || S.prod === 'cur' || S.prod === 'fish';
-    if (S.prod === 'fish' && !covers(S.data.goes, PRODUCTS.goes.res, PRODUCTS.goes.cells)) jobs.push(loadGrid('goes').then((g) => { S.data.goes = g; }).catch((e) => console.warn('hourly SST for fish', e)));
+    if (S.prod === 'fish' && !S.date && !covers(S.data.goes, PRODUCTS.goes.res, PRODUCTS.goes.cells)) jobs.push(loadGrid('goes').then((g) => { S.data.goes = g; }).catch((e) => console.warn('hourly SST for fish', e)));
     if (needCur && !covers(S.data.curb, 0.25, 999)) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
     if (needCur && !covers(S.data.hf, 0.055, 320)) jobs.push(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; }));
     if (needCur && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) jobs.push(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; }));
@@ -1772,7 +1799,7 @@ function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'm
 // ---------- Chart picker: thumbnails of every source x day for the current view ----------
 const PK = { fam: 'sst', items: [], token: 0 };
 function pickerItems(fam) {
-  const today = isoDate(new Date()), items = [];
+  const today = S.date ? addDays(S.date, 1) : isoDate(new Date()), items = [];
   if (fam === 'goes') {
     const end = S.latestHour || hourAdd(new Date().toISOString(), -5);
     for (let h = 0; h < 12; h++) { const t = hourAdd(end, -h); items.push({ fam, key: 'goes', t, label: 'GOES-19 hourly', when: niceHour(t), s: { host: 'aoml', id: 'goes19SSThourly', v: 'sst', res: 0.02, asc: true } }); }
@@ -2012,6 +2039,22 @@ function stepTime(dir) {
   invalidateTimeData(); refresh();
 }
 $('dPrev').onclick = () => stepTime(-1);
+// Tap the date to open a calendar and jump to any day (back to 2002 for temps; 1993-1997 for the Copernicus archives)
+const dp = $('datePick'); dp.max = isoDate(new Date()); dp.min = '2002-06-01';
+$('dLabel').onclick = () => {
+  if (S.prod === 'bottom' || S.prod === 'wx') return;
+  dp.value = S.date || isoDate(new Date());
+  try { dp.showPicker(); } catch (e) { dp.focus(); dp.click(); }
+};
+dp.onchange = () => {
+  const d = dp.value; if (!d) return;
+  S.fc = 0;
+  if (PRODUCTS[S.prod].hourly) {      // hourly GOES only keeps ~5 days: older dates switch to the daily map
+    if (d < addDays(isoDate(new Date()), -4)) { S.prod = 'sst'; store.set('prod', 'sst'); document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === 'sst')); S.hour = null; S.date = d; }
+    else { S.hour = `${d}T12:00:00Z`; }
+  } else S.date = d >= isoDate(new Date()) ? null : d;
+  invalidateTimeData(); refresh();
+};
 $('dNext').onclick = () => stepTime(1);
 $('dLatest').onclick = () => { if (S.fc) { S.fc = 0; refresh(); return; } S.date = null; S.hour = null; invalidateTimeData(); refresh(); };
 
