@@ -924,7 +924,7 @@ function domT(v) { const p = PRODUCTS[S.prod]; return clamp(tOf(p, v, S.domain),
 function drawLegend() {
   const p = PRODUCTS[S.prod], g = PG(), rng = S.range[S.prod];
   let when = '';
-  if (p.hourly && g?.times?.length) when = niceHour(g.times[g.times.length - 1]);
+  if ((p.hourly || S.prod === 'fish') && g?.times?.length) when = `${S.prod === 'fish' ? 'Now · temps ' : ''}${niceHour(g.times[g.times.length - 1])}`;
   else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
   if (S.fc > 0) when = `${niceHour(fcTime(S.fc))} (+${S.fc} h forecast)`;
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
@@ -1378,7 +1378,7 @@ function buildFish() {
     spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why });
     if (spots.length >= 8) break;
   }
-  S.data.fish = { ...g, v: score, date: sst.date };
+  S.data.fish = { ...g, v: score, date: (S.data.goes?.date || sst.date), times: S.data.goes?.times?.slice(-1) };
   S.fishSpots = spots;
   renderSpots();
 }
@@ -1483,6 +1483,56 @@ function buildRings(g) {
       return [la, lo, edge || sample(g, la, lo) !== sample(g, la, lo) || !(z < -20)];
     })).filter((r) => r.some((pt) => !pt[2])),
   }));
+}
+
+// ---------- Best times to fish: solunar majors/minors + sun + tides (solunar.js; tides from Open-Meteo, global) ----------
+const TIDE_CACHE = new Map();
+async function tidesFor(lat, lon) {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+  if (TIDE_CACHE.has(key)) return TIDE_CACHE.get(key);
+  const p = omJson(`https://marine-api.open-meteo.com/v1/marine?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&hourly=sea_level_height_msl&past_days=1&forecast_days=5&timezone=auto`)
+    .then((d) => {
+      const off = d.utc_offset_seconds * 1000;
+      const series = d.hourly.time.map((t, i) => ({ t: Date.parse(`${t}:00Z`) - off, h: d.hourly.sea_level_height_msl[i] }));
+      return { off, tz: d.timezone, turns: Solunar.tideTurns(series) };
+    })
+    .catch(() => ({ off: Math.round(lon / 15) * 3600e3, tz: null, turns: [] }));    // no tides: still show moon + sun
+  TIDE_CACHE.set(key, p);
+  return p;
+}
+async function bestTimesHtml(lat, lon, dayOff = 0) {
+  const T = await tidesFor(lat, lon);
+  const nowLocal = new Date(Date.now() + T.off);
+  const t0 = Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate() + dayOff) - T.off;   // local midnight
+  const s = Solunar.summary(t0, lat, lon, T.turns);
+  const hm = (t) => { const d = new Date(t + T.off); let h = d.getUTCHours(); const m = String(d.getUTCMinutes()).padStart(2, '0'), ap = h >= 12 ? 'p' : 'a'; h = h % 12 || 12; return `${h}:${m}${ap}`; };
+  const pct = (t) => clamp((t - t0) / 864e5 * 100, 0, 100);
+  const rise = s.events.find((x) => x.k === 'sunrise'), set = s.events.find((x) => x.k === 'sunset');
+  const best = s.windows.length ? Math.max(...s.windows.map((w) => w.score)) : 0;
+  let bar = '';
+  if (rise) bar += `<i class="night" style="left:0;width:${pct(rise.t)}%"></i>`;
+  if (set) bar += `<i class="night" style="left:${pct(set.t)}%;right:0"></i>`;
+  for (const w of s.windows) bar += `<i class="${w.kind}${w.score === best ? ' best' : ''}" style="left:${pct(w.a)}%;width:${pct(w.b) - pct(w.a)}%"></i>`;
+  for (const x of s.tides) if (x.t >= t0 && x.t < t0 + 864e5) bar += `<b class="tide" style="left:${pct(x.t)}%">${x.k === 'high' ? '▲' : '▼'}</b>`;
+  if (dayOff === 0 && Date.now() > t0 && Date.now() < t0 + 864e5) bar += `<u style="left:${pct(Date.now())}%"></u>`;
+  const label = { overhead: 'moon overhead', underfoot: 'moon underfoot', moonrise: 'moonrise', moonset: 'moonset' };
+  const list = s.windows.map((w) => `<li class="${w.score === best ? 'best' : ''}">${w.score === best ? '★ ' : ''}<b>${w.kind === 'major' ? 'Major' : 'Minor'}</b> ${hm(w.a)}–${hm(w.b)} <small>${label[w.why]}${w.tags.length ? ` + ${w.tags.join(', ')}` : ''}</small></li>`).join('');
+  const tides = s.tides.filter((x) => x.t >= t0 && x.t < t0 + 864e5).map((x) => `${x.k === 'high' ? 'High' : 'Low'} ${hm(x.t)}`).join(' · ');
+  const dayName = dayOff === 0 ? 'Today' : dayOff === 1 ? 'Tomorrow' : new Date(t0 + T.off + 6e7).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+  return `<div class="bt"><div class="bt-h"><span>${dayName}</span><span>${s.phase} ${Math.round(s.ill.fraction * 100)}% · ${'★'.repeat(s.stars)}${'☆'.repeat(4 - s.stars)}</span></div>
+    <div class="bt-bar">${bar}</div><div class="bt-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+    <ol class="bt-list">${list || '<li>No solunar periods today</li>'}</ol>
+    <div class="hint">${rise ? `Sunrise ${hm(rise.t)}` : ''}${set ? ` · Sunset ${hm(set.t)}` : ''}${tides ? `<br>Tides: ${tides}` : ''}<br>★ = best window (lines up with dawn/dusk or a tide change). Stars: new/full moon days rate highest.</div></div>`;
+}
+// A best-times card with Today / Tomorrow / +2 tabs, rendered into an element
+function mountBestTimes(el, lat, lon) {
+  let day = 0;
+  const draw = async () => {
+    el.innerHTML = `<div class="bt-tabs">${['Today', 'Tomorrow', '+2 days'].map((t, i) => `<button data-d="${i}" class="${i === day ? 'on' : ''}">${t}</button>`).join('')}</div><div class="bt-body">Loading…</div>`;
+    el.querySelectorAll('.bt-tabs button').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); day = +b.dataset.d; draw(); }; });
+    try { el.querySelector('.bt-body').innerHTML = await bestTimesHtml(lat, lon, day); } catch (e) { el.querySelector('.bt-body').textContent = 'Couldn\'t work out times right now.'; }
+  };
+  draw();
 }
 
 // ---------- Weather forecast (Open-Meteo: free, no key; GFS/ECMWF-style wind + wave models) ----------
@@ -1660,6 +1710,7 @@ async function refresh() {
     if (S.prod === 'cur') buildCurGrid();
     if (S.prod === 'fish') buildFish();
     $('fishPanel').hidden = S.prod !== 'fish' || S.fishCollapsed;
+    if (S.prod === 'fish') showFishTimes();
     if (needSsh && S.data.ssh && S.prod !== 'fish') buildRings(S.data.ssh); else S.geo.rings = [];
     autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate();
     const gg = S.data[S.prod];
@@ -1972,6 +2023,14 @@ document.querySelectorAll('#wxMode button').forEach((b) => {
     buildWx(); autoRange(true); renderRaster(); drawLegend(); chart.draw();
   };
 });
+let fishTimesFor = '';
+function showFishTimes() {
+  const hp3 = PORTS.find((x) => x[0] === S.home), el = $('fishTimes'); if (!el) return;
+  if (!hp3) { el.innerHTML = ''; return; }
+  if (fishTimesFor === S.home && el.innerHTML) return;
+  fishTimesFor = S.home; $('fishTimesHdr').textContent = `Best times · ${S.home.replace(' Inlet', '')}`;
+  mountBestTimes(el, hp3[1], hp3[2]);
+}
 function setFishCollapsed(c) {
   S.fishCollapsed = c; $('fishPanel').hidden = c || S.prod !== 'fish';
   document.querySelector('.prod[data-prod=fish]')?.classList.toggle('collapsed', c);
@@ -2049,6 +2108,7 @@ const hp = $('homePort');
 PORTS.forEach(([n]) => { const o = document.createElement('option'); o.value = o.textContent = n; hp.appendChild(o); });
 hp.value = S.home;
 const homeChanged = () => {
+  if (S.prod === 'fish') showFishTimes();
   if (fillSpecies() && S.prod === 'fish') { buildFish(); autoRange(true); renderRaster(); drawLegend(); }
   else if (S.prod === 'fish') { buildFish(); }
   chart.draw();
@@ -2180,12 +2240,11 @@ function onFix(p) {
   ME.pos = [la, lo]; ME.speed = speed; ME.heading = heading;
   if (!ME.dot) {
     ME.ring = L.circle(ME.pos, { radius: accuracy, color: '#35c2ff', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(ME.layer);
-    ME.dot = L.marker(ME.pos, { icon: L.divIcon({ className: '', html: '<div class="me-dot"><i></i></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(ME.layer);
+    ME.dot = L.marker(ME.pos, { icon: L.divIcon({ className: '', html: '<div class="me-tri"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 1.5 21 22 12 17 3 22Z"/></svg></div>', iconSize: [26, 26], iconAnchor: [13, 13] }), interactive: false, zIndexOffset: 1000 }).addTo(ME.layer);
   } else { ME.dot.setLatLng(ME.pos); ME.ring.setLatLng(ME.pos).setRadius(accuracy); }
-  const arrow = ME.dot.getElement()?.querySelector('i');
-  // the teardrop's point sits at the bottom-left corner (compass 225°), so turn it to the course over ground
-  if (arrow) arrow.style.transform = heading != null && speed > 0.5 ? `rotate(${heading - 225}deg)` : '';
-  arrow?.classList.toggle('moving', heading != null && speed > 0.5);
+  // boat-style triangle: points along your course when moving, north when stopped
+  const tri = ME.dot.getElement()?.querySelector('.me-tri'), moving = heading != null && speed > 0.5;
+  if (tri) { tri.style.transform = `rotate(${moving ? heading : 0}deg)`; tri.classList.toggle('moving', moving); }
   if (ME.follow) map.setView(ME.pos, first ? Math.max(map.getZoom(), 9) : map.getZoom(), { animate: !first });
   if (first) status('');
   paintLocate();
@@ -2200,7 +2259,7 @@ function openReading(latlng, title) {
   const el = document.createElement('div'); el.className = 'pp';
   el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
     <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
-    <button class="ppwx">Weather forecast here</button><div class="ppWxOut"></div>`;
+    <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup({ maxWidth: 330 }).setLatLng(latlng).setContent(el);
   const wb = el.querySelector('.ppwx');
   wb.onclick = async () => {
@@ -2208,6 +2267,8 @@ function openReading(latlng, title) {
     try { el.querySelector('.ppWxOut').innerHTML = await spotForecast(lat, lng); wb.remove(); pop.update(); }
     catch (e) { wb.disabled = false; wb.textContent = `${/overloaded|busy|responding/.test(e.message) ? 'Weather service busy' : 'Forecast unavailable'}: tap to try again`; }
   };
+  const bb = el.querySelector('.ppbt');
+  bb.onclick = () => { bb.remove(); mountBestTimes(el.querySelector('.ppBtOut'), lat, lng); setTimeout(() => pop.update(), 600); setTimeout(() => pop.update(), 2500); };
   el.querySelector('.ppSave').onclick = () => {
     const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
     const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);

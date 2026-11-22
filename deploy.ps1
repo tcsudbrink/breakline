@@ -28,7 +28,7 @@ if ($Action -eq 'status') { & $netlify sites:list; exit }
 $dist = Join-Path $env:TEMP 'breakline-dist'
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 New-Item -ItemType Directory $dist | Out-Null
-$files = 'index.html','style.css','app.js','loran.js','sw.js','manifest.webmanifest','icon.svg','_redirects','_headers'
+$files = 'index.html','style.css','app.js','loran.js','solunar.js','sw.js','manifest.webmanifest','icon.svg','_redirects','_headers'
 foreach ($f in $files) { Copy-Item (Join-Path $PSScriptRoot $f) $dist }
 Copy-Item (Join-Path $PSScriptRoot 'vendor') $dist -Recurse
 Copy-Item (Join-Path $PSScriptRoot 'data') $dist -Recurse

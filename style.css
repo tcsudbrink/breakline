@@ -142,6 +142,29 @@ button.ghost { background: transparent !important; }
 .wxt tr.bad td:nth-child(3), .wxt tr.bad td:nth-child(4) { color: #ff7a6a; }
 .leaflet-popup-content { max-height: 70vh; overflow: auto; }
 
+/* Best times (solunar + tides) */
+.pp-btns { display: flex; gap: 6px; margin-top: 8px; }
+.pp-btns button { flex: 1; background: #13243a !important; color: var(--text) !important; border: 1px solid var(--line) !important; border-radius: 5px; padding: 5px 6px; font-weight: 600; cursor: pointer; }
+.bt-tabs { display: flex; gap: 3px; margin: 8px 0 4px; }
+.bt-tabs button { flex: 1; background: #13243a; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 3px 4px; font: 600 11px system-ui, sans-serif; cursor: pointer; }
+.bt-tabs button.on { background: var(--accent); color: #04121d; border-color: var(--accent); }
+.bt-h { display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 4px; }
+.bt-h span:last-child { color: #ffe27a; }
+.bt-bar { position: relative; height: 22px; background: #2a5a7a; border-radius: 4px; overflow: hidden; margin-top: 2px; }
+.bt-bar i { position: absolute; top: 0; bottom: 0; }
+.bt-bar i.night { background: rgba(5, 12, 24, .72); }
+.bt-bar i.major { background: #3fbf6a; top: 3px; bottom: 3px; border-radius: 3px; }
+.bt-bar i.minor { background: #a8e0a0; top: 7px; bottom: 7px; border-radius: 3px; }
+.bt-bar i.best { box-shadow: 0 0 0 2px #ffe27a; }
+.bt-bar b.tide { position: absolute; top: 3px; transform: translateX(-50%); font-size: 10px; color: #fff; text-shadow: 0 0 2px #000; }
+.bt-bar u { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff5a5a; text-decoration: none; }
+.bt-axis { display: flex; justify-content: space-between; font-size: 9.5px; color: var(--muted); margin-top: 1px; }
+.bt-list { list-style: none; padding: 0; margin: 6px 0; font-size: 12px; }
+.bt-list li { padding: 2px 0; }
+.bt-list li.best { color: #ffe27a; }
+.bt-list small { color: var(--muted); }
+#fishTimes .bt-tabs { margin-top: 2px; }
+
 /* Measure */
 .measure-btn { color: var(--text); }
 .measure-btn.on { background: #ffd23f !important; color: #000; }
@@ -159,9 +182,9 @@ button.ghost { background: transparent !important; }
 .locate-btn span::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: transparent; }
 .locate-btn.on span { border-color: var(--accent); }
 .locate-btn.follow span::after { background: var(--accent); }
-.me-dot { width: 22px; height: 22px; display: grid; place-items: center; }
-.me-dot i { width: 14px; height: 14px; border-radius: 50%; background: #1e90ff; border: 3px solid #fff; box-shadow: 0 0 0 1px #000, 0 0 10px rgba(30,144,255,.8); }
-.me-dot i.moving { border-radius: 50% 50% 50% 0; transform-origin: center; }
+.me-tri { width: 26px; height: 26px; transform-origin: 50% 50%; transition: transform .4s; filter: drop-shadow(0 0 4px rgba(30,144,255,.9)); }
+.me-tri path { fill: #1e90ff; stroke: #fff; stroke-width: 2.2; stroke-linejoin: round; }
+.me-tri.moving path { fill: #ff8c1a; }
 
 /* Buoys */
 .buoy { position: relative; }
