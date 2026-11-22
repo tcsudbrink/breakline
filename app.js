@@ -120,9 +120,15 @@ const PRODUCTS = {
     stops: ['#3b2a1a', '#7a5a2b', '#b89a4e', '#d9d79a', '#9fd3c7', '#4fb0c6', '#2b7bba', '#1f4a8f', '#1a2766'],
   },
   cur: {
-    name: 'Currents (HF radar + satellite)', unit: 'kt', step: 0.1, res: 0.25, computed: true,
+    get name() { return S.fc ? 'Currents (ocean-model forecast)' : 'Currents (HF radar + satellite)'; }, unit: 'kt', step: 0.1, res: 0.25, computed: true,
     fmt: (v) => `${v.toFixed(2)} kt`,
     stops: ['#0b1a2e', '#16345e', '#1f5f9a', '#2a93c4', '#4fc3c9', '#a6dd8a', '#f2e04a', '#f6a23a', '#e5533b', '#b3123a'],
+  },
+  wx: {
+    get name() { return S.wxMode === 'waves' ? 'Waves (forecast)' : 'Wind (forecast)'; }, get unit() { return S.wxMode === 'waves' ? 'ft' : 'kt'; },
+    step: 1, res: 0.25, computed: true,
+    fmt: (v) => (S.wxMode === 'waves' ? `${v.toFixed(1)} ft` : `${Math.round(v)} kt`),
+    get stops() { return S.wxMode === 'waves' ? ['#0d2a4a', '#1d5a8a', '#2e95b8', '#4fc3a1', '#b9dc5a', '#f4d03f', '#f39c34', '#e0533a', '#a51d4a'] : ['#16304f', '#1f5c8f', '#2a93b8', '#45c29a', '#a5d65a', '#f2d23e', '#f39a35', '#e0503a', '#a01f56', '#5e1470']; },
   },
   fish: {
     name: 'Where to fish (hot-spot score)', unit: '/100', step: 5, res: 0.01, computed: true,
@@ -174,6 +180,10 @@ const S = {
   geo: { land: [], depth: [], iso: [], breaks: [], rings: [], td: [] },
 };
 if (!PRODUCTS[S.prod]) S.prod = 'sst';
+S.fc = 0;   // forecast hours ahead of now (0 = now)
+S.wxMode = store.get('wxMode', 'wind'); S.wxH = 0;   // weather: wind or waves, hours ahead
+// the grid on screen: the temp-drift forecast when one is showing, otherwise the loaded data
+const PG = () => (S.fc > 0 && PRODUCTS[S.prod].sst && S.data.drift ? S.data.drift : S.data[S.prod]);
 
 // ---------- Helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -440,7 +450,12 @@ function lut(stops) {
   }
   return out;
 }
-const LUTS = Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, lut(p.stops)]));
+const LUTS = Object.fromEntries(Object.entries(PRODUCTS).filter(([k]) => k !== 'wx').map(([k, p]) => [k, lut(p.stops)]));
+{ // weather has two palettes (wind / waves)
+  const keep = S.wxMode, mk = (m) => { S.wxMode = m; return lut(PRODUCTS.wx.stops); };
+  const WXL = { wind: mk('wind'), waves: mk('waves') }; S.wxMode = keep;
+  Object.defineProperty(LUTS, 'wx', { get: () => WXL[S.wxMode] || WXL.wind });
+}
 const tOf = (p, v, [lo, hi]) => (p.log ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : (v - lo) / (hi - lo));
 const vOf = (p, t, [lo, hi]) => (p.log ? 10 ** (Math.log10(lo) + t * (Math.log10(hi) - Math.log10(lo))) : lo + t * (hi - lo));
 
@@ -579,6 +594,7 @@ function drawChart(ctx, size) {
   if ((S.ov.cur || S.prod === 'cur') && (S.data.curb || S.data.hf)) drawCurrents(ctx, size);
   if (S.ov.wrecks) drawWrecks(ctx, size, z);
   if (S.prod === 'fish') drawHotspots(ctx);
+  if (S.prod === 'wx') drawWx(ctx);
 
   if (S.ov.ports) {
     ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'left';
@@ -670,6 +686,11 @@ function drawTdGrid(ctx, size, z) {
 
 // Current at a point: HF radar (hourly, 2-6 km) where it reaches, satellite geostrophic (daily, 25 km) beyond.
 function curAt(lat, lon) {
+  if (S.fc > 0) {     // forecast mode: the ocean model only (radar and satellite can't see the future)
+    const f = S.data.curfc; if (!f) return null;
+    const u = sample(f, lat, lon, f.u), v = sample(f, lat, lon, f.vv);
+    return u === u && v === v ? [u, v, 'model forecast'] : null;
+  }
   for (const [h, lbl] of [[map.getZoom() >= 9 && S.data.hf1, 'HF radar 1 km'], [S.data.hf, 'HF radar 6 km']]) {
     if (h) { const u = sample(h, lat, lon, h.u), v = sample(h, lat, lon, h.vv); if (u === u && v === v) return [u, v, lbl]; }
   }
@@ -828,7 +849,7 @@ function rasterize(g, pixel) {   // pixel(lat, lon, out[4]) -> sets rgba; return
 }
 
 function renderRaster() {
-  const p = PRODUCTS[S.prod], g = S.data[S.prod];
+  const p = PRODUCTS[S.prod], g = PG();
   if (!g) { if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; } return; }
   let r;
   if (S.prod === 'bottom') {
@@ -856,7 +877,7 @@ function renderRaster() {
 function renderRelief() {
   const want = S.ov.relief && S.prod !== 'bottom' && S.data.shade;
   if (!want) { if (reliefLayer) { map.removeLayer(reliefLayer); reliefLayer = null; } return; }
-  const g = S.data.shade, dg = S.data[S.prod];
+  const g = S.data.shade, dg = PG();
   const r = rasterize(g, (lat, lon, o) => {
     if (!dg || sample(dg, lat, lon) !== sample(dg, lat, lon)) return;   // only shade where the chart has data
     const sh = sample(g, lat, lon); if (sh !== sh) return;
@@ -880,7 +901,8 @@ function viewValues(g) {
 
 // Domain = what's on screen (the slider's full travel); range = what the colors stretch across
 function autoRange(force) {
-  const p = PRODUCTS[S.prod], g = S.data[S.prod]; if (!g) return;
+  const p = PRODUCTS[S.prod], g = PG(); if (!g) return;
+  if (S.prod === 'wx') { S.domain = S.wxMode === 'waves' ? [0, 15] : [0, 40]; if (S.auto || force || !S.range.wx) S.range.wx = S.wxMode === 'waves' ? [0, 10] : [0, 30]; return; }
   if (S.prod === 'bottom') {
     const vals = viewValues(g).filter((z) => z < 0).map((z) => -z / FATHOM).sort((a, b) => a - b);
     const hi = vals.length ? Math.max(50, vals[Math.floor(vals.length * 0.98)]) : 2500;
@@ -900,10 +922,11 @@ function autoRange(force) {
 function fmtTick(p, v) { return p.log ? (v < 1 ? v.toFixed(2) : v.toFixed(1)) : Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1); }
 function domT(v) { const p = PRODUCTS[S.prod]; return clamp(tOf(p, v, S.domain), 0, 1); }
 function drawLegend() {
-  const p = PRODUCTS[S.prod], g = S.data[S.prod], rng = S.range[S.prod];
+  const p = PRODUCTS[S.prod], g = PG(), rng = S.range[S.prod];
   let when = '';
   if (p.hourly && g?.times?.length) when = niceHour(g.times[g.times.length - 1]);
   else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
+  if (S.fc > 0) when = `${niceHour(fcTime(S.fc))} (+${S.fc} h forecast)`;
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
   $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}</span>`;
   $('legend').classList.toggle('fixed', !!p.noLegendRange);
@@ -957,10 +980,13 @@ const CM = {
   vgos: { layer: 'SEALEVEL_GLO_PHY_L4_NRT_008_046/cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D_202506/vgos', min: -3, max: 3, res: 0.125 },
   mld: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_0.083deg_P1D-m_202406/mlotst', min: 0, max: 400, res: 0.083, model: true },
   so: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m_202406/so', min: 28, max: 38, res: 0.083, model: true },
+  // ocean-model surface currents every 6 h, analysis + ~9-day forecast (for the current and temp-drift forecasts)
+  uo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/uo', min: -3, max: 3, res: 0.083, model: true },
+  vo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/vo', min: -3, max: 3, res: 0.083, model: true },
 };
 const cmStyle = (s) => `cmap:gray,range:${s.min}/${s.max}${s.log ? ',logScale' : ''}`;
 const cmTile = (s, z, x, y, day) => `${CMEMS}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${encodeURIComponent(s.layer)}&STYLE=${encodeURIComponent(cmStyle(s))}` +
-  `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day}T00:00:00Z`;
+  `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day.includes('T') ? day : `${day}T00:00:00Z`}`;
 let CM_INV = null;      // gray level -> color-table index
 async function cmInverse() {
   if (CM_INV) return CM_INV;
@@ -1028,7 +1054,7 @@ async function loadCmems(s, win, day, target = 360) {
     if (row < 0 || row >= H) continue;
     v.set(mos.subarray(row * W, row * W + W), j * W);
   }
-  return { nx: W, ny, lat0: latBot + dlat / 2, dlat, lon0: lonW + pxDeg / 2, dlon: pxDeg, v, times: [`${day}T00:00:00Z`], date: day, src: 'cmems' };
+  return { nx: W, ny, lat0: latBot + dlat / 2, dlat, lon0: lonW + pxDeg / 2, dlon: pxDeg, v, times: [day.includes('T') ? day : `${day}T00:00:00Z`], date: day.slice(0, 10), src: 'cmems' };
 }
 
 async function loadGrid(prod) {
@@ -1459,6 +1485,147 @@ function buildRings(g) {
   }));
 }
 
+// ---------- Weather forecast (Open-Meteo: free, no key; GFS/ECMWF-style wind + wave models) ----------
+const WX = { grid: null, key: '' };
+// Open-Meteo answers {"error":true,"reason":...} when busy; retry twice, then report it plainly
+async function omJson(url) {
+  let last;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetchOnce(url, 15000), j = await r.json();
+      if (r.ok && !j.error) return j;
+      last = new Error(j.reason ? `weather service: ${j.reason.toLowerCase()}` : `weather service ${r.status}`);
+    } catch (e) { last = new Error('weather service not responding'); }
+    await new Promise((z) => setTimeout(z, 1500 * (i + 1)));
+  }
+  throw last;
+}
+async function loadWx() {
+  const b = map.getBounds().pad(0.15), cols = 13, rows = clamp(Math.round(cols * (b.getNorth() - b.getSouth()) / (b.getEast() - b.getWest())), 4, 13);
+  const lats = [], lons = [];
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    lats.push((b.getSouth() + j * (b.getNorth() - b.getSouth()) / (rows - 1)).toFixed(3));
+    lons.push((b.getWest() + i * (b.getEast() - b.getWest()) / (cols - 1)).toFixed(3));
+  }
+  const key = `${lats[0]},${lons[0]},${lats[lats.length - 1]},${lons[lons.length - 1]},${new Date().toISOString().slice(0, 13)}`;
+  if (WX.key === key && WX.grid) return;
+  const qs = `latitude=${lats.join(',')}&longitude=${lons.join(',')}&forecast_days=7&timezone=GMT`;
+  const [w, m] = await Promise.all([
+    omJson(`https://api.open-meteo.com/v1/forecast?${qs}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn`),
+    omJson(`https://marine-api.open-meteo.com/v1/marine?${qs}&hourly=wave_height,wave_direction,wave_period`).catch(() => null),
+  ]);
+  const W = Array.isArray(w) ? w : [w], M = m ? (Array.isArray(m) ? m : [m]) : [];
+  WX.grid = { cols, rows, lat0: b.getSouth(), lon0: b.getWest(), dlat: (b.getNorth() - b.getSouth()) / (rows - 1), dlon: (b.getEast() - b.getWest()) / (cols - 1),
+    t0: W[0].hourly.time[0] + ':00Z', n: W[0].hourly.time.length, W, M };
+  WX.key = key;
+}
+// hours from the model's first time step to "now"
+const wxNowIdx = () => (WX.grid ? Math.max(0, Math.round((Date.now() - new Date(WX.grid.t0)) / 3600e3)) : 0);
+function buildWx() {
+  const G = WX.grid; if (!G) return;
+  const h = clamp(wxNowIdx() + S.wxH, 0, G.n - 1), nx = G.cols, ny = G.rows, v = new Float32Array(nx * ny).fill(NaN), dir = new Float32Array(nx * ny).fill(NaN), gust = new Float32Array(nx * ny).fill(NaN), per = new Float32Array(nx * ny).fill(NaN);
+  for (let k = 0; k < nx * ny; k++) {
+    if (S.wxMode === 'waves') {
+      const mm = G.M[k]?.hourly; if (!mm) continue;
+      const ht = mm.wave_height[h]; if (ht == null) continue;
+      v[k] = ht * 3.28084; dir[k] = mm.wave_direction[h]; per[k] = mm.wave_period[h];
+    } else {
+      const ww = G.W[k]?.hourly; if (!ww) continue;
+      v[k] = ww.wind_speed_10m[h]; dir[k] = ww.wind_direction_10m[h]; gust[k] = ww.wind_gusts_10m[h];
+    }
+  }
+  S.data.wx = { nx, ny, lat0: G.lat0, lon0: G.lon0, dlat: G.dlat, dlon: G.dlon, v, dir, gust, per, date: new Date(new Date(G.t0).getTime() + h * 3600e3).toISOString().slice(0, 10), times: [new Date(new Date(G.t0).getTime() + h * 3600e3).toISOString()] };
+}
+// wind barbs-lite: an arrow pointing the way the wind/waves are GOING, with the number
+function drawWx(ctx) {
+  const g = S.data.wx; if (!g) return;
+  ctx.save(); ctx.font = '700 10.5px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
+    const k = j * g.nx + i, val = g.v[k]; if (val !== val) continue;
+    const [x, y] = project(g.lat0 + j * g.dlat, g.lon0 + i * g.dlon), to = (g.dir[k] + 180) * Math.PI / 180;   // "from" -> "toward"
+    const L0 = 22, dx = Math.sin(to) * L0 / 2, dy = -Math.cos(to) * L0 / 2;
+    for (const [c, lw] of [['rgba(0,0,0,.8)', 3.6], ['#fff', 1.6]]) {
+      ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(x - dx, y - dy); ctx.lineTo(x + dx, y + dy);
+      const a = Math.atan2(dy, dx); ctx.lineTo(x + dx - Math.cos(a - 0.5) * 6, y + dy - Math.sin(a - 0.5) * 6); ctx.moveTo(x + dx, y + dy);
+      ctx.lineTo(x + dx - Math.cos(a + 0.5) * 6, y + dy - Math.sin(a + 0.5) * 6); ctx.stroke();
+    }
+    const lbl = S.wxMode === 'waves' ? `${val.toFixed(1)}'${g.per[k] ? `@${Math.round(g.per[k])}s` : ''}` : `${Math.round(val)}${g.gust[k] ? `g${Math.round(g.gust[k])}` : ''}`;
+    haloText(ctx, lbl, x, y + 16, '#fff', 'rgba(0,0,0,.8)');
+  }
+  ctx.restore();
+}
+// Point forecast for "Forecast here": next 48 h every 3 h, colored for fishability
+async function spotForecast(lat, lon) {
+  const qs = `latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&forecast_days=4&timezone=America%2FNew_York`;
+  const [w, m] = await Promise.all([
+    omJson(`https://api.open-meteo.com/v1/forecast?${qs}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation_probability&wind_speed_unit=kn`),
+    omJson(`https://marine-api.open-meteo.com/v1/marine?${qs}&hourly=wave_height,wave_direction,wave_period`).catch(() => null),
+  ]);
+  const t = w.hourly.time, now = Date.now(), dirTxt = (d) => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(((d % 360) + 360) % 360 / 45) % 8];
+  let rows = '', lastDay = '';
+  for (let i = 0; i < t.length; i += 3) {
+    const tt = new Date(t[i] + (t[i].length === 16 ? ':00' : '')); if (tt < now - 3 * 3600e3) continue;
+    if (rows.split('<tr').length > 17) break;
+    const ws = w.hourly.wind_speed_10m[i], gs = w.hourly.wind_gusts_10m[i], wd = w.hourly.wind_direction_10m[i];
+    const wh = m?.hourly?.wave_height?.[i], wp = m?.hourly?.wave_period?.[i];
+    const ft = wh != null ? wh * 3.28084 : null, rain = w.hourly.precipitation_probability?.[i];
+    const cls = ws > 20 || (ft != null && ft > 6) ? 'bad' : ws > 14 || (ft != null && ft > 4) ? 'meh' : 'good';
+    const day = t[i].slice(0, 10), dayLbl = day !== lastDay ? new Date(t[i]).toLocaleDateString('en-US', { weekday: 'short' }) : ''; lastDay = day;
+    rows += `<tr class="${cls}"><td>${dayLbl}</td><td>${new Date(t[i]).toLocaleTimeString('en-US', { hour: 'numeric' })}</td><td>${dirTxt(wd)} ${Math.round(ws)}<small> g${Math.round(gs)}</small></td><td>${ft != null ? `${ft.toFixed(1)}'<small> ${Math.round(wp)}s</small>` : '–'}</td><td>${rain != null ? `${rain}%` : ''}</td></tr>`;
+  }
+  return `<table class="wxt"><tr><th></th><th>ET</th><th>Wind kt</th><th>Seas</th><th>Rain</th></tr>${rows}</table><div class="hint">Green: under 15 kt and 4 ft. Open-Meteo wind and wave models.</div>`;
+}
+
+// ---------- Forecasts: currents (Copernicus ocean model, 6-hourly, ~9 days) + where today's temp features drift ----------
+const FC_MAX = { cur: 168, sst: 72, goes: 72 };   // how far ahead each chart can go (hours)
+const fcBase = () => { const d = new Date(); d.setUTCMinutes(0, 0, 0); d.setUTCHours(Math.floor(d.getUTCHours() / 6) * 6); return d; };
+const fcTime = (h) => new Date(fcBase().getTime() + h * 3600e3).toISOString().slice(0, 13) + ':00:00Z';
+const FC_CACHE = new Map();
+async function fcFrame(h, win) {
+  const t = fcTime(h), key = `${t}|${win.s},${win.n},${win.w},${win.e}`;
+  if (FC_CACHE.has(key)) return FC_CACHE.get(key);
+  const ok = (x) => (Math.abs(x) < 3 ? x : NaN);
+  const p = Promise.all([loadCmems(CM.uo6, win, t, 260), loadCmems(CM.vo6, win, t, 260)]).then(([u, v]) => ({ ...u, u: u.v.map(ok), vv: v.v.map(ok), time: t }));
+  FC_CACHE.set(key, p); p.catch(() => FC_CACHE.delete(key));
+  return p;
+}
+// Carry today's temps forward with the forecast currents (backward trajectories, 2-hour steps). The water keeps its
+// temperature; only its position changes. So breaks, eddy edges and warm tongues move; nothing warms or cools.
+function computeDrift(base, frames, H) {
+  const stepDeg = Math.max(base.dlon, (base.nx - 1) * base.dlon / 200);
+  const nx = Math.max(2, Math.round((base.nx - 1) * base.dlon / stepDeg) + 1), ny = Math.max(2, Math.round((base.ny - 1) * base.dlat / stepDeg) + 1);
+  const g = { nx, ny, lat0: base.lat0, lon0: base.lon0, dlat: (base.ny - 1) * base.dlat / (ny - 1), dlon: (base.nx - 1) * base.dlon / (nx - 1), v: new Float32Array(nx * ny).fill(NaN) };
+  const vel = (la, lo, t) => {
+    const f = clamp(t / 6, 0, frames.length - 1), k = Math.min(frames.length - 2, Math.floor(f)), a = f - k, A = frames[k], B = frames[Math.max(k + 1, 0)] || A;
+    const u = (1 - a) * sample(A, la, lo, A.u) + a * sample(B, la, lo, B.u), v = (1 - a) * sample(A, la, lo, A.vv) + a * sample(B, la, lo, B.vv);
+    return u === u && v === v ? [v * 3600 / 111320, u * 3600 / (111320 * Math.cos(la * Math.PI / 180))] : null;   // deg per hour
+  };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    let la = g.lat0 + j * g.dlat, lo = g.lon0 + i * g.dlon;
+    if (sample(base, la, lo) !== sample(base, la, lo)) continue;
+    for (let t = H; t > 0; t -= 2) {
+      const dt = Math.min(2, t), v1 = vel(la, lo, t); if (!v1) break;
+      const v2 = vel(la - v1[0] * dt / 2, lo - v1[1] * dt / 2, t - dt / 2) || v1;
+      la -= v2[0] * dt; lo -= v2[1] * dt;
+    }
+    g.v[j * nx + i] = sample(base, la, lo);
+  }
+  return { ...g, date: fcTime(H).slice(0, 10), times: [fcTime(H)], drifted: true };
+}
+async function applyForecast() {
+  if (!S.fc) { S.data.curfc = null; S.data.drift = null; return; }
+  if (S.prod === 'cur') {
+    S.data.curfc = await fcFrame(S.fc, windowFor(0.083, 300));
+  } else if (PRODUCTS[S.prod].sst && S.data[S.prod]) {
+    const win = windowFor(0.083, 300), hours = []; for (let h = 0; h <= S.fc; h += 6) hours.push(h);
+    status(`Forecasting where today's temps will be in ${S.fc} h…`);
+    const frames = await Promise.all(hours.map((h) => fcFrame(h, win)));
+    S.data.curfc = frames[frames.length - 1];
+    S.data.drift = computeDrift(S.data[S.prod], frames, S.fc);
+    buildSstGeo(S.data.drift);
+  }
+}
+
 let loading = 0;
 async function refresh() {
   const my = ++loading, p = PRODUCTS[S.prod];
@@ -1480,13 +1647,16 @@ async function refresh() {
     if (needCur && !covers(S.data.curb, 0.25, 999)) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
     if (needCur && !covers(S.data.hf, 0.055, 320)) jobs.push(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; }));
     if (needCur && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) jobs.push(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; }));
+    if (S.prod === 'wx') add('weather', loadWx().then(() => buildWx()));
     if (S.prod === 'fish') {
       if (!covers(S.data.sst, PRODUCTS.sst.res, PRODUCTS.sst.cells) || S.data.sst?.src !== S.src.sst) add('water temp', loadGrid('sst').then((g) => { S.data.sst = g; }));
       if (!covers(S.data.chl, PRODUCTS.chl.res, PRODUCTS.chl.cells) || S.data.chl?.src !== S.src.chl) jobs.push(loadGrid('chl').then((g) => { S.data.chl = g; }).catch(() => {}));
     } else if (S.prod !== 'sst' && !S.data.sst) jobs.push(loadGrid('sst').then((g) => { S.data.sst = g; }).catch(() => {}));
     const res = await Promise.allSettled(jobs);
     if (my !== loading) return;
-    const fail = res.find((r) => r.status === 'rejected');
+    let fail = res.find((r) => r.status === 'rejected');
+    try { await applyForecast(); } catch (e) { console.error('forecast', e); fail = { reason: new Error(`forecast: ${e.message}`) }; }
+    if (my !== loading) return;
     if (S.prod === 'cur') buildCurGrid();
     if (S.prod === 'fish') buildFish();
     $('fishPanel').hidden = S.prod !== 'fish' || S.fishCollapsed;
@@ -1494,6 +1664,8 @@ async function refresh() {
     autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate();
     const gg = S.data[S.prod];
     if (fail) status(`Some data didn't load (${fail.reason.message}).`, true);
+    else if (S.fc > 0 && p.sst) status(`Today's temps moved ${S.fc} h by the forecast currents: breaks and eddy edges shift; the water itself doesn't warm or cool here.`);
+    else if (S.fc > 0) status('Ocean-model current forecast (Copernicus, 9 km). HF radar and satellite only show now.');
     else if (p.hourly && gg && gg.anyPct < 3) status('Clouds: GOES has had almost no clear view here in the last 24 hours. Use daily Temp.', true);
     else if (p.hourly && gg) status(`${gg.clearPct}% clear this hour · rest filled from the last 24 h`);
     else if (S.prod === 'mld' && gg && !gg.via && viewValues(gg).length < 0.3 * gg.nx * gg.ny * 0.5) status('NOAA only computes mixed layer depth in warm (Gulf Stream) water; blank elsewhere.', true);
@@ -1508,6 +1680,14 @@ function updateDate() {
   const p = PRODUCTS[S.prod], g = S.data[S.prod];
   $('datebar').classList.toggle('static', S.prod === 'bottom');
   if (S.prod === 'bottom') { $('dLabel').textContent = 'Seafloor · NOAA ETOPO 2022'; return; }
+  $('wxMode').hidden = S.prod !== 'wx';
+  if (S.prod === 'wx') {
+    const t = S.data.wx?.times?.[0];
+    $('dLabel').textContent = S.wxH ? `${t ? niceHour(t) : ''} (+${S.wxH} h)` : `Now${t ? ` · ${niceHour(t)}` : ''}`;
+    $('dPrev').disabled = S.wxH <= 0; $('dNext').disabled = S.wxH >= 165; $('dLatest').hidden = !S.wxH; $('dLatest').textContent = 'Now';
+    return;
+  }
+  $('dPrev').disabled = false;
   // Where to fish is "as of now": label it with the newest hourly temp and current it used, not yesterday's daily map
   if (S.prod === 'fish' && !S.date) {
     const th = S.data.goes?.times?.slice(-1)[0], tc = S.data.hf?.time;
@@ -1515,17 +1695,26 @@ function updateDate() {
     $('dLabel').textContent = `Now · temps ${th ? t(th) : 'daily'}${tc ? ` · current ${t(tc)}` : ''} ET`;
     $('dNext').disabled = true; $('dLatest').hidden = true; return;
   }
+  const canFc = FC_MAX[S.prod] && !S.date && !S.hour;   // at "latest", ▶ steps into the forecast
+  $('datebar').classList.toggle('forecast', S.fc > 0);
+  if (S.fc > 0) {
+    $('dLabel').textContent = `Forecast ${niceHour(fcTime(S.fc))} (+${S.fc} h)`;
+    $('dNext').disabled = S.fc >= FC_MAX[S.prod]; $('dLatest').hidden = false; $('dLatest').textContent = 'Now';
+    return;
+  }
+  $('dLatest').textContent = 'Latest';
   if (p.hourly) {
     const t = g?.times?.length ? g.times[g.times.length - 1] : S.hour;
     $('dLabel').textContent = t ? niceHour(t) : 'Latest';
-    $('dNext').disabled = !S.hour || (S.latestHour && S.hour >= S.latestHour);
+    $('dNext').disabled = !canFc && (!S.hour || (S.latestHour && S.hour >= S.latestHour));
     $('dLatest').hidden = !S.hour;
   } else {
     const shown = g?.date || S.date;
     $('dLabel').textContent = shown ? nice(shown) : 'Latest';
-    $('dNext').disabled = !S.date;
+    $('dNext').disabled = !canFc && !S.date;
     $('dLatest').hidden = !S.date;
   }
+  $('dNext').title = canFc ? 'Forecast: step ahead 6 hours' : 'Next';
 }
 function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'fish']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
 
@@ -1757,6 +1946,11 @@ const depChange = () => {
 $('depMin').onchange = depChange; $('depMax').onchange = depChange;
 function stepTime(dir) {
   const p = PRODUCTS[S.prod], g = S.data[S.prod];
+  // forecast steps: 6 hours at a time from "now" (no data reload needed for the base chart)
+  if (S.prod === 'wx') { S.wxH = clamp(S.wxH + 3 * dir, 0, 165); buildWx(); autoRange(); renderRaster(); drawLegend(); chart.draw(); updateDate(); return; }
+  if (FC_MAX[S.prod] && !S.date && !S.hour && (S.fc > 0 || dir > 0)) {
+    S.fc = clamp(S.fc + 6 * dir, 0, FC_MAX[S.prod]); refresh(); return;
+  }
   if (p.hourly) {
     const cur = S.hour || g?.times?.[g.times.length - 1] || S.latestHour; if (!cur) return;
     const next = hourAdd(cur, dir); S.hour = S.latestHour && next >= S.latestHour ? null : next;
@@ -1768,8 +1962,16 @@ function stepTime(dir) {
 }
 $('dPrev').onclick = () => stepTime(-1);
 $('dNext').onclick = () => stepTime(1);
-$('dLatest').onclick = () => { S.date = null; S.hour = null; invalidateTimeData(); refresh(); };
+$('dLatest').onclick = () => { if (S.fc) { S.fc = 0; refresh(); return; } S.date = null; S.hour = null; invalidateTimeData(); refresh(); };
 
+document.querySelectorAll('#wxMode button').forEach((b) => {
+  b.classList.toggle('on', b.dataset.m === S.wxMode);
+  b.onclick = () => {
+    S.wxMode = b.dataset.m; store.set('wxMode', S.wxMode); S.auto = true;
+    document.querySelectorAll('#wxMode button').forEach((x) => x.classList.toggle('on', x === b));
+    buildWx(); autoRange(true); renderRaster(); drawLegend(); chart.draw();
+  };
+});
 function setFishCollapsed(c) {
   S.fishCollapsed = c; $('fishPanel').hidden = c || S.prod !== 'fish';
   document.querySelector('.prod[data-prod=fish]')?.classList.toggle('collapsed', c);
@@ -1782,6 +1984,7 @@ document.querySelectorAll('.prod').forEach((b) => {
     if (b.dataset.prod === 'fish' && S.prod === 'fish') { setFishCollapsed(!S.fishCollapsed); return; }
     if (b.dataset.prod === 'fish') S.fishCollapsed = false;
     S.prod = b.dataset.prod; store.set('prod', S.prod); S.auto = true;
+    if (S.fc && !FC_MAX[S.prod]) S.fc = 0; else if (S.fc) S.fc = Math.min(S.fc, FC_MAX[S.prod]);
     document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x === b));
     if (reliefLayer) { map.removeLayer(reliefLayer); reliefLayer = null; }
     refresh();
@@ -1873,7 +2076,7 @@ map.on('moveend', () => {
   clearTimeout(moveTimer);
   moveTimer = setTimeout(() => {
     const p = PRODUCTS[S.prod];
-    const need = !covers(S.data.bathy, 1 / 240, 620) || (!p.computed && !covers(S.data[S.prod], p.res, p.cells)) || ['ftle', 'cur', 'fish'].includes(S.prod) ||
+    const need = !covers(S.data.bathy, 1 / 240, 620) || (!p.computed && !covers(S.data[S.prod], p.res, p.cells)) || ['ftle', 'cur', 'fish', 'wx'].includes(S.prod) ||
       ((S.ov.cur || S.prod === 'cur') && !hfCovers());
     if (need) { refresh(); return; }
     const before = JSON.stringify(S.range[S.prod]); autoRange();
@@ -1909,7 +2112,7 @@ function readings(lat, lon) {
 }
 
 map.on('mousemove', (e) => {
-  const { lat, lng } = e.latlng, p = PRODUCTS[S.prod], g = S.data[S.prod];
+  const { lat, lng } = e.latlng, p = PRODUCTS[S.prod], g = PG();
   const val = S.prod === 'bottom' ? NaN : sample(g, lat, lng), z = sample(S.data.bathy, lat, lng), home = PORTS.find((x) => x[0] === S.home);
   const pos = S.grid === 'td' && inLoran(lat, lng) ? fmtTd(lat, lng) : fmtLL(lat, lng);
   const parts = [`<span class="v">${pos}</span>`];
@@ -1992,19 +2195,27 @@ map.on('dragstart', () => { if (ME.follow) { ME.follow = false; paintLocate(); }
 function openReading(latlng, title) {
   const { lat, lng } = latlng;
   const rows = readings(lat, lng).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-  const html = `<div class="pp"><div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
-    <div class="save"><input id="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button id="ppSave">Save</button></div></div>`;
-  const pop = L.popup({ maxWidth: 320 }).setLatLng(latlng).setContent(html).openOn(map);
-  setTimeout(() => {
-    const btn = document.getElementById('ppSave'); if (!btn) return;
-    btn.onclick = () => {
-      const name = (document.getElementById('ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
-      const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
-      S.wpts.push({ name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
-        sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}` });
-      saveWpts(); map.closePopup(pop);
-    };
-  }, 0);
+  // Build the popup as a DOM element (not an HTML string): Leaflet re-renders string content when it pans
+  // the map to fit the popup, which would drop these button handlers.
+  const el = document.createElement('div'); el.className = 'pp';
+  el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
+    <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
+    <button class="ppwx">Weather forecast here</button><div class="ppWxOut"></div>`;
+  const pop = L.popup({ maxWidth: 330 }).setLatLng(latlng).setContent(el);
+  const wb = el.querySelector('.ppwx');
+  wb.onclick = async () => {
+    wb.disabled = true; wb.textContent = 'Loading forecast…';
+    try { el.querySelector('.ppWxOut').innerHTML = await spotForecast(lat, lng); wb.remove(); pop.update(); }
+    catch (e) { wb.disabled = false; wb.textContent = `${/overloaded|busy|responding/.test(e.message) ? 'Weather service busy' : 'Forecast unavailable'}: tap to try again`; }
+  };
+  el.querySelector('.ppSave').onclick = () => {
+    const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
+    const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
+    S.wpts.push({ name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
+      sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}` });
+    saveWpts(); map.closePopup(pop);
+  };
+  pop.openOn(map);
 }
 // ---------- Measure: tap points to get leg + total distance (nm) and bearings ----------
 const MEAS = { on: false, pts: [], layer: L.layerGroup().addTo(map) };

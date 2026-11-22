@@ -45,6 +45,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 #dLabel { padding: 0 10px; font-weight: 600; min-width: 150px; text-align: center; white-space: nowrap; }
 #dLatest { padding: 0 12px; color: var(--muted) !important; }
 #datebar.static button { display: none; }
+#datebar.forecast { border-color: #b78cff; box-shadow: 0 0 0 1px #b78cff inset; }
+#datebar.forecast #dLabel { color: #e2d2ff; }
 #datebar.static #dLabel { padding: 6px 14px; }
 
 #zone { position: absolute; top: 10px; left: calc(var(--rail) + 10px); z-index: 1000; background: var(--panel); color: var(--text);
@@ -125,11 +127,27 @@ button.ghost { background: transparent !important; }
 #locHelp ol { margin: 6px 0 0 18px; padding: 0; line-height: 1.5; }
 #locHelp b { color: #fff; }
 
+/* Weather */
+#wxMode { position: absolute; top: 54px; left: calc(var(--rail) + 50%); transform: translateX(-50%); z-index: 1000; display: flex; gap: 3px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 3px; }
+#wxMode button { background: none; border: 0; color: var(--muted); padding: 4px 14px; border-radius: 13px; cursor: pointer; font: 600 12px system-ui, sans-serif; }
+#wxMode button.on { background: var(--accent); color: #04121d; }
+.ppwx { margin-top: 8px; width: 100%; background: #13243a !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
+.wxt { border-collapse: collapse; margin-top: 8px; font-size: 11.5px; width: 100%; }
+.wxt th { color: var(--muted); font-weight: 600; text-align: left; padding: 2px 4px; }
+.wxt td { padding: 2px 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wxt td small { color: var(--muted); }
+.wxt tr.good td:nth-child(3), .wxt tr.good td:nth-child(4) { color: #7ee08a; }
+.wxt tr.meh td:nth-child(3), .wxt tr.meh td:nth-child(4) { color: #f2d23e; }
+.wxt tr.bad td:nth-child(3), .wxt tr.bad td:nth-child(4) { color: #ff7a6a; }
+.leaflet-popup-content { max-height: 70vh; overflow: auto; }
+
 /* Measure */
 .measure-btn { color: var(--text); }
 .measure-btn.on { background: #ffd23f !important; color: #000; }
 #measureBar { position: absolute; top: 54px; left: calc(var(--rail) + 50%); transform: translateX(-50%); z-index: 1001; display: flex; gap: 6px; align-items: center;
   background: var(--panel); border: 1px solid #ffd23f; border-radius: 18px; padding: 4px 6px 4px 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#measureBar[hidden], [hidden] { display: none !important; }
 #measureBar button { background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
 #measureBar button#measureDone { background: #ffd23f; color: #000; border-color: #ffd23f; font-weight: 700; }
 .meas-lbl { transform: translate(-50%, -130%); background: rgba(0,0,0,.82); color: #ffe27a; font: 700 11.5px system-ui, sans-serif; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
