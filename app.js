@@ -824,12 +824,13 @@ function drawSpots(ctx, size, z, boxes) {
       if ((pass === 'named') !== named) continue;
       if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
       const [x, y] = project(la, lo);
-      // symbol always (it's a real spot), label only if it fits
+      // zoomed out, a spot shows only where its name fits (no piles of unlabeled diamonds); zoomed in, every spot shows
+      const w = ctx.measureText(name).width, bx = [x + 8, y - 8, x + 12 + w, y + 8];
+      const fits = !(bx[0] < 60 || bx[1] < 74 || bx[2] > size.x - 50 || bx[3] > size.y - 100) && !boxes.some((o) => !(bx[2] < o[0] || bx[0] > o[2] || bx[3] < o[1] || bx[1] > o[3]));
+      if (!fits && z < 9) continue;
       if (named) { ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.fillStyle = '#ffb347'; ctx.fill(); ctx.lineWidth = 1.4; ctx.strokeStyle = '#000'; ctx.stroke(); }
       else { ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 7); ctx.fillStyle = '#2ecc71'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#000'; ctx.stroke(); }
-      const w = ctx.measureText(name).width, bx = [x + 8, y - 8, x + 12 + w, y + 8];
-      if (bx[0] < 60 || bx[1] < 74 || bx[2] > size.x - 50 || bx[3] > size.y - 100) continue;
-      if (boxes.some((o) => !(bx[2] < o[0] || bx[0] > o[2] || bx[3] < o[1] || bx[1] > o[3]))) continue;
+      if (!fits) continue;
       boxes.push(bx); n++;
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(name, x + 9, y);
       ctx.fillStyle = named ? '#ffd28a' : '#b8f5cf'; ctx.fillText(name, x + 9, y);

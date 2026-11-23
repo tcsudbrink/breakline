@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p site/live
           python prefetch.py site/live
-          echo "<p>Breakline data. The app is at https://breakline-ihfj.netlify.app</p>" > site/index.html
+          echo "<p>Breakline data. The app is at https://breakline-xi.vercel.app</p>" > site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
