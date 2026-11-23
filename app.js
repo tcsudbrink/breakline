@@ -1675,7 +1675,8 @@ function hiloFor(id) {
   const t = new Date(Date.now() - 12 * 3600e3), ymd = `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`;
   const p = fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${id}&product=predictions&datum=MLLW&interval=hilo&units=english&time_zone=gmt&format=json&begin_date=${ymd}&range=72&application=breakline`)
     .then((r) => r.json()).then((d) => (d.predictions || []).map((x) => ({ t: Date.parse(x.t.replace(' ', 'T') + ':00Z'), ft: +x.v, k: x.type === 'H' ? 'high' : 'low' })))
-    .catch(() => null);
+    .then((v) => { if (!v.length) throw new Error('no tides'); return v; })
+    .catch(() => { HILO.delete(id); return null; });          // don't remember a failure; the next look retries
   HILO.set(id, p);
   return p;
 }
@@ -1703,7 +1704,48 @@ function tideHtml(pts, kind, spKey, ft) {
   const cur = pts.findIndex((x) => x.t > now), stageNow = cur > 0 ? (pts[cur - 1].k === 'high' ? 'falling' : 'rising') : null;
   const best = wins.filter((w) => w.best)
     .slice(0, plan.want === 'moving' ? 3 : 2).map((w) => (w.a === now ? `now–${hmT(w.b)}` : `${dayT(w.a)}${hmT(w.a)}–${hmT(w.b)}`)).join(', ');
+  tideHtml.wins = wins.filter((w) => w.best); tideHtml.stageNow = stageNow;
   return `${stageNow ? `<b>Now ${stageNow}</b> · ` : ''}${turns}${best ? `<br><b>Fish the ${plan.want} tide:</b> ${best} <span class="dim">(${plan.why})</span>` : ''}`;
+}
+// ---------- Inshore wind (Open-Meteo hourly, knots) ----------
+const WIND = new Map();
+function windFor(lat, lon) {
+  const k = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  if (!WIND.has(k)) WIND.set(k, omJson(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn&timeformat=unixtime&forecast_days=3`)
+    .then((d) => d.hourly.time.map((t, i) => ({ t: t * 1000, kt: d.hourly.wind_speed_10m[i], dir: d.hourly.wind_direction_10m[i], g: d.hourly.wind_gusts_10m[i] })).filter((x) => x.kt != null))
+    .catch(() => null));
+  return WIND.get(k);
+}
+const windAt = (hrs, t) => hrs.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a));
+const windTxt = (w) => `${card(w.dir)} ${Math.round(w.kt)} kt${w.g > w.kt + 4 ? `, gusts ${Math.round(w.g)}` : ''}`;
+// Which way is open water from here: the deepest direction ~1.5 nm out
+function seaward(lat, lon) {
+  let best = null;
+  for (let a = 0; a < 360; a += 30) {
+    const r = 1.5 / 60, z = depthAt(lat + r * Math.cos(a * Math.PI / 180), lon + r * Math.sin(a * Math.PI / 180) / Math.cos(lat * Math.PI / 180));
+    if (z === z && (!best || z < best.z)) best = { a, z };
+  }
+  return best ? best.a : null;
+}
+const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+function windNotes(w, kind, sp, lat, lon, stage) {
+  const n = [], sea = seaward(lat, lon), onshore = sea != null && angDiff(w.dir, sea) <= 60, offshore = sea != null && angDiff(w.dir, sea) >= 120;
+  if (w.kt >= 20) n.push('too much wind for most inshore spots; look for a lee shore');
+  else if (kind === 'inlet' && onshore && w.kt >= 12 && stage === 'falling') n.push('wind against the outgoing tide: the inlet stacks up and gets rough');
+  else if ((kind === 'shoal' || (kind === 'reef' && sp !== 'flounder')) && w.kt >= 12) n.push('choppy and muddy on the flats; fish the lee side or the wind-blown edge where bait piles up');
+  else if (onshore && w.kt >= 8 && ['reddrum', 'trout', 'striper'].includes(sp)) n.push('onshore wind pushes bait against this shoreline: good');
+  else if (offshore && w.kt >= 8) n.push('offshore wind: flatter water here, and it lowers the tide a bit');
+  else if (w.kt < 6) n.push('light wind: easy to fish and sight fish');
+  return n.join('; ');
+}
+async function addWind(box, s, stageNow) {
+  const hrs = await windFor(s.lat, s.lon); if (!hrs?.length || !box.isConnected) return;
+  const now = windAt(hrs, Date.now()), win = (tideHtml.winsFor?.get(box) || []).find((w) => w.a > Date.now() + 3600e3);
+  let h = `<br><b>Wind now:</b> ${windTxt(now)}`;
+  const note = windNotes(now, s.kind, S.species, s.lat, s.lon, stageNow);
+  if (win) { const w2 = windAt(hrs, (win.a + win.b) / 2); h += ` · <b>during the ${hmT(win.a)} window:</b> ${windTxt(w2)}`; }
+  h += note ? ` <span class="dim">(${note})</span>` : '';
+  box.insertAdjacentHTML('beforeend', h);
 }
 let tideTok = 0;
 async function fillTides(el) {
@@ -1711,10 +1753,12 @@ async function fillTides(el) {
   for (const li of el.querySelectorAll('li[data-i]')) {
     const s = S.fishSpots[+li.dataset.i], box = li.querySelector('.tides'); if (!s || !box) continue;
     const st = nearestStation(s.lat, s.lon);
-    if (!st) { box.textContent = 'No NOAA tide station within 20 nm.'; continue; }
+    if (!st) { box.textContent = 'No NOAA tide station within 20 nm.'; addWind(box, s, null); continue; }
     hiloFor(st.id).then((pts) => {
       if (my !== tideTok) return;
       box.innerHTML = pts?.length ? `<span class="dim">Tides · ${st.name} (${st.d.toFixed(1)} nm)</span><br>${tideHtml(pts, s.kind, S.species, s.ft)}` : 'Tide forecast unavailable right now.';
+      (tideHtml.winsFor ||= new WeakMap()).set(box, pts?.length ? tideHtml.wins : []);
+      addWind(box, s, pts?.length ? tideHtml.stageNow : null);
     });
   }
 }
@@ -1731,7 +1775,7 @@ function renderSpots() {
   for (const id of ['maxRun', 'depMin']) $(id).closest('.row2').hidden = ins;
   document.querySelector('#fishPanel .hint.long').hidden = ins;
   if (ins) {
-    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station and when to fish them.`;
+    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station, when to fish them, and the wind.`;
   } else $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
   el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
 }
