@@ -627,7 +627,7 @@ function inshoreSpots(sp) {
     if (c.kind === 'drop') { if (c.bot - c.top < 3) continue; why.push(`${Math.round(c.top)} → ${Math.round(c.bot)} ft`); } else if (ft === ft) why.push(`${Math.round(ft)} ft`);
     if (t === t) why.push(`${t.toFixed(1)}°F${tf >= 1 ? '' : tf > 0 ? ` (${sp.t[1]}-${sp.t[2]}° is best)` : ' (outside their range)'}`);
     why.push(INSHORE_WHY[c.kind]);
-    res.push({ lat: c.lat, lon: c.lon, score: sc, why, kind: c.kind, name: c.name });
+    res.push({ lat: c.lat, lon: c.lon, score: sc, why, kind: c.kind, name: c.name, ft: c.kind === 'drop' ? c.top : ft });
   }
   res.sort((a, b) => b.score - a.score);
   const out = [], per = {};
@@ -1657,19 +1657,81 @@ function drawHotspots(ctx) {
   });
   ctx.restore();
 }
+// ---------- Inshore tides: NOAA CO-OPS predictions at the nearest station to each pick ----------
+let TSTA = null;
+const tstaReady = fetch('data/tide_stations.json').then((r) => r.json()).then((d) => { TSTA = d.rows; }).catch(() => {});
+function nearestStation(lat, lon) {
+  let best = null;
+  for (const r of TSTA || []) {
+    if (Math.abs(r[1] - lat) > 0.4 || Math.abs(r[2] - lon) > 0.5) continue;
+    const d = rangeBearing([lat, lon], [r[1], r[2]])[0];
+    if (!best || d < best.d) best = { id: r[0], name: r[3], d };
+  }
+  return best && best.d <= 20 ? best : null;
+}
+const HILO = new Map();
+function hiloFor(id) {
+  if (HILO.has(id)) return HILO.get(id);
+  const t = new Date(Date.now() - 12 * 3600e3), ymd = `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`;
+  const p = fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${id}&product=predictions&datum=MLLW&interval=hilo&units=english&time_zone=gmt&format=json&begin_date=${ymd}&range=72&application=breakline`)
+    .then((r) => r.json()).then((d) => (d.predictions || []).map((x) => ({ t: Date.parse(x.t.replace(' ', 'T') + ':00Z'), ft: +x.v, k: x.type === 'H' ? 'high' : 'low' })))
+    .catch(() => null);
+  HILO.set(id, p);
+  return p;
+}
+const hmT = (t) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const dayT = (t) => { const d = new Date(t), n = new Date(); return d.toDateString() === n.toDateString() ? '' : d.toLocaleDateString('en-US', { weekday: 'short' }) + ' '; };
+// Which stage of the tide to fish, by spot type and species
+function tidePlan(kind, sp, ft) {
+  const flats = (kind === 'shoal' || kind === 'reef') && !(ft > 10);
+  if (flats && (sp === 'reddrum' || sp === 'trout')) return { want: 'rising', why: 'rising water pushes fish up onto the flat and the oyster edges' };
+  if (kind === 'drop') return { want: 'falling', why: 'falling water pulls bait off the shallows and over the edge' };
+  if (kind === 'reef' && ft > 10) return { want: 'moving', why: 'either direction; the reef holds fish best when it runs, and slack is slow' };
+  if (sp === 'tarpon' || sp === 'snook') return { want: 'falling', why: 'the outgoing pulls bait out through the pass and past the structure' };
+  return { want: 'falling', why: 'the first hours of the outgoing flush bait out; the incoming brings clean water' };
+}
+// Moving water: the middle of each stage (1-3.5 h after the turn) runs hardest
+function tideHtml(pts, kind, spKey, ft) {
+  const now = Date.now(), plan = tidePlan(kind, spKey, ft), wins = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], stage = a.k === 'high' ? 'falling' : 'rising';
+    const w0 = a.t + Math.min(3600e3, (b.t - a.t) * 0.15), w1 = Math.min(b.t - 3600e3, a.t + 3.5 * 3600e3);
+    if (w1 < now || w0 > now + 36 * 3600e3 || w1 <= w0) continue;
+    wins.push({ stage, a: Math.max(w0, now), b: w1, best: stage === plan.want || plan.want === 'moving' });
+  }
+  const turns = pts.filter((x) => x.t > now - 3600e3).slice(0, 4).map((x) => `${x.k === 'high' ? 'High' : 'Low'} ${dayT(x.t)}${hmT(x.t)} (${x.ft.toFixed(1)} ft)`).join(' · ');
+  const cur = pts.findIndex((x) => x.t > now), stageNow = cur > 0 ? (pts[cur - 1].k === 'high' ? 'falling' : 'rising') : null;
+  const best = wins.filter((w) => w.best)
+    .slice(0, plan.want === 'moving' ? 3 : 2).map((w) => (w.a === now ? `now–${hmT(w.b)}` : `${dayT(w.a)}${hmT(w.a)}–${hmT(w.b)}`)).join(', ');
+  return `${stageNow ? `<b>Now ${stageNow}</b> · ` : ''}${turns}${best ? `<br><b>Fish the ${plan.want} tide:</b> ${best} <span class="dim">(${plan.why})</span>` : ''}`;
+}
+let tideTok = 0;
+async function fillTides(el) {
+  const my = ++tideTok; await tstaReady;
+  for (const li of el.querySelectorAll('li[data-i]')) {
+    const s = S.fishSpots[+li.dataset.i], box = li.querySelector('.tides'); if (!s || !box) continue;
+    const st = nearestStation(s.lat, s.lon);
+    if (!st) { box.textContent = 'No NOAA tide station within 20 nm.'; continue; }
+    hiloFor(st.id).then((pts) => {
+      if (my !== tideTok) return;
+      box.innerHTML = pts?.length ? `<span class="dim">Tides · ${st.name} (${st.d.toFixed(1)} nm)</span><br>${tideHtml(pts, s.kind, S.species, s.ft)}` : 'Tide forecast unavailable right now.';
+    });
+  }
+}
 function renderSpots() {
   const el = $('spotList'); if (!el) return;
   const home = PORTS.find((x) => x[0] === S.home);
   el.innerHTML = (S.fishSpots || []).map((s, i) => {
     const [d, b] = home ? rangeBearing([home[1], home[2]], [s.lat, s.lon]) : [0, 0];
-    return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home}</small></li>`;
+    return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home}</small>${SPECIES[S.species]?.inshore ? '<small class="tides">Loading tides…</small>' : ''}</li>`;
   }).join('') || '<li><small>Nothing scores well in range. Try another species or a longer run.</small></li>';
   const fi = S.fishInfo;
   const ins = !!SPECIES[S.species]?.inshore;
+  if (ins) fillTides(el);
   for (const id of ['maxRun', 'depMin']) $(id).closest('.row2').hidden = ins;
   document.querySelector('#fishPanel .hint.long').hidden = ins;
   if (ins) {
-    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Tide and current timing matter more inshore than anything here.`;
+    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station and when to fish them.`;
   } else $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
   el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
 }

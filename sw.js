@@ -3,10 +3,10 @@
 //  - NOAA data for a specific date never changes: cache first, instant
 //  - "latest" NOAA data: use a copy under 2 hours old instantly and refresh it in the background
 //  - wrecks / depth files shipped with the app: cache first
-const APP = 'breakline-app-v24', DATA = 'breakline-data-v2';
+const APP = 'breakline-app-v25', DATA = 'breakline-data-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'loran.js', 'solunar.js', 'manifest.webmanifest', 'icon.svg',
   'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/d3-array.min.js', 'vendor/d3-contour.min.js',
-  'data/wrecks.json', 'data/spots.json', 'data/places.json', 'data/bathy_2m.json', 'data/bathy_2m.bin', 'data/bathy_fl.json', 'data/bathy_fl.bin', 'data/bathy_cr.json', 'data/bathy_cr.bin'];
+  'data/wrecks.json', 'data/spots.json', 'data/tide_stations.json', 'data/places.json', 'data/bathy_2m.json', 'data/bathy_2m.bin', 'data/bathy_fl.json', 'data/bathy_fl.bin', 'data/bathy_cr.json', 'data/bathy_cr.bin'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(APP).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
