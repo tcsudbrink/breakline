@@ -31,6 +31,9 @@ const PRE_BOX = {
 const FATHOM = 1.8288;
 const DEPTHS_MAJOR = [50, 100, 500, 1000];
 const DEPTHS_MINOR = [10, 20, 30, 40, 200, 300, 1500, 2000];
+// Inshore lines, in fathoms (labelled in feet like an inshore chart): 6, 12, 18, 30 ft
+const DEPTHS_INSHORE = [1, 2, 3, 5];
+const depthTxt = (m) => { const fm = -m / FATHOM; return fm < 10 ? `${Math.round(fm * 6)} ft` : `${Math.round(fm).toLocaleString()} fm`; };
 
 // Inlet positions are approximate (within ~0.5 nm), for range/bearing only.
 const PORTS = [
@@ -590,9 +593,20 @@ function drawChart(ctx, size) {
 
   if (S.ov.depth && S.geo.depth.length) {
     const show = new Set(z >= 8.5 ? [...DEPTHS_MAJOR, ...DEPTHS_MINOR] : z >= 7.5 ? [...DEPTHS_MAJOR, 20, 30, 200] : z >= 6 ? DEPTHS_MAJOR : [100, 1000]);
+    // inshore lines once you're zoomed in on the sounds, bays and beaches (6 ft only when closer still)
+    if (z >= 9) [2, 3, 5].forEach((f) => show.add(f));
+    if (z >= 10) show.add(1);
     for (const c of S.geo.depth) {
       if (!show.has(c.fm)) continue;
-      const major = DEPTHS_MAJOR.includes(c.fm);
+      const major = DEPTHS_MAJOR.includes(c.fm), inshore = DEPTHS_INSHORE.includes(c.fm);
+      if (inshore) {
+        ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2; strokeRings(ctx, c.rings);
+        ctx.strokeStyle = 'rgba(10,30,60,.9)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 3]);
+        const spots = strokeRings(ctx, c.rings, 140); ctx.setLineDash([]);
+        ctx.font = 'italic 600 10.5px system-ui, sans-serif';
+        placeLabels(ctx, spots, `${c.fm * 6}'`, boxes, size, 420);
+        continue;
+      }
       ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = major ? 3.4 : 2.4; strokeRings(ctx, c.rings);
       ctx.strokeStyle = 'rgba(10,10,10,.95)'; ctx.lineWidth = major ? 1.4 : 0.9;
       const spots = strokeRings(ctx, c.rings, 180);
@@ -810,33 +824,37 @@ function drawPlaces(ctx, size, z, boxes) {
 // ---------- Named fishing spots: fishermen's names (vetted, sourced) + official state artificial reefs ----------
 let SPOTS = null;
 fetch('data/spots.json').then((r) => r.json()).then((d) => { SPOTS = d.rows; chart?.draw(); }).catch(() => {});
-const isNamedSpot = (r) => r[3] !== 'reef';   // lumps, holes, canyons, towers, grounds vs. artificial reefs
+const INSHORE_KINDS = new Set(['pier', 'jetty', 'rock', 'shoal/bar', 'inshore']);
+const spotPass = (r) => (r[3] === 'reef' ? 'reef' : INSHORE_KINDS.has(r[3]) ? 'inshore' : 'named');
+const isNamedSpot = (r) => spotPass(r) === 'named';   // lumps, holes, canyons, towers, grounds vs. reefs and inshore marks
 function drawSpots(ctx, size, z, boxes) {
   if (!SPOTS || z < 7) return;
   const b = map.getBounds().pad(0.02);
   ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   let n = 0;
   // fishermen's named spots first (bigger, orange), then reefs (green, only when zoomed in)
-  for (const pass of ['named', 'reef']) {
+  for (const pass of ['named', 'reef', 'inshore']) {
     if (pass === 'reef' && z < 9) continue;
+    if (pass === 'inshore' && z < 10) continue;
     if (pass === 'named' && z < 7.5) continue;
     ctx.font = pass === 'named' ? 'italic 700 11.5px system-ui, sans-serif' : '600 10.5px system-ui, sans-serif';
     for (const r of SPOTS) {
-      if (n > 220) break;
-      const [la, lo, name] = r, named = isNamedSpot(r);
-      if ((pass === 'named') !== named) continue;
+      if (n > 260) break;
+      const [la, lo, name] = r, named = pass === 'named';
+      if (spotPass(r) !== pass) continue;
       if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
       const [x, y] = project(la, lo);
       // zoomed out, a spot shows only where its name fits (no piles of unlabeled diamonds); zoomed in, every spot shows
       const w = ctx.measureText(name).width, bx = [x + 8, y - 8, x + 12 + w, y + 8];
       const fits = !(bx[0] < 60 || bx[1] < 74 || bx[2] > size.x - 50 || bx[3] > size.y - 100) && !boxes.some((o) => !(bx[2] < o[0] || bx[0] > o[2] || bx[3] < o[1] || bx[1] > o[3]));
-      if (!fits && z < 9) continue;
-      if (named) { ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.fillStyle = '#ffb347'; ctx.fill(); ctx.lineWidth = 1.4; ctx.strokeStyle = '#000'; ctx.stroke(); }
+      if (!fits && (z < 9 || (pass === 'inshore' && z < 11))) continue;
+      if (pass === 'inshore') { ctx.fillStyle = '#5fd3ff'; ctx.fillRect(x - 3.5, y - 3.5, 7, 7); ctx.lineWidth = 1.2; ctx.strokeStyle = '#000'; ctx.strokeRect(x - 3.5, y - 3.5, 7, 7); }
+      else if (named) { ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.fillStyle = '#ffb347'; ctx.fill(); ctx.lineWidth = 1.4; ctx.strokeStyle = '#000'; ctx.stroke(); }
       else { ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 7); ctx.fillStyle = '#2ecc71'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#000'; ctx.stroke(); }
       if (!fits) continue;
       boxes.push(bx); n++;
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(name, x + 9, y);
-      ctx.fillStyle = named ? '#ffd28a' : '#b8f5cf'; ctx.fillText(name, x + 9, y);
+      ctx.fillStyle = named ? '#ffd28a' : pass === 'inshore' ? '#bfeeff' : '#b8f5cf'; ctx.fillText(name, x + 9, y);
     }
   }
   ctx.restore(); ctx.textAlign = 'center';
@@ -1220,7 +1238,7 @@ async function loadBathy() {
   }
   const vals = Float64Array.from(g.v, (x) => (x !== x ? 0 : x));
   S.geo.land = contourRings(g, vals, [0])[0].rings;
-  const fms = [...DEPTHS_MAJOR, ...DEPTHS_MINOR];
+  const fms = [...DEPTHS_INSHORE, ...DEPTHS_MAJOR, ...DEPTHS_MINOR];
   S.geo.depth = contourRings(g, vals, fms.map((f) => -f * FATHOM)).map((c) => ({ fm: Math.round(-c.value / FATHOM), rings: c.rings }));
   // Hillshade (sun from the northwest, exaggerated so the seafloor reads)
   const sh = new Float32Array(g.nx * g.ny).fill(NaN), az = 315 * Math.PI / 180, alt = 45 * Math.PI / 180;
@@ -2622,11 +2640,11 @@ function readings(lat, lon) {
   add('Front strength', D.ftle, PRODUCTS.ftle.fmt);
   add('Salinity', D.sss, PRODUCTS.sss.fmt);
   add('Hot-spot score', D.fish, PRODUCTS.fish.fmt);
-  const z = sample(D.bathy, lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : `${Math.round(-z / FATHOM).toLocaleString()} fm`]);
+  const z = sample(D.bathy, lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
   const c = curAt(lat, lon);
   if (c) r.push(['Current', `${(Math.hypot(c[0], c[1]) * 1.94384).toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`]);
   for (const [d, b, sp] of spotsNear(lat, lon)) {
-    r.push([sp[3] === 'reef' ? 'Reef' : 'Spot', `${sp[2]}${sp[6] ? ` · ${sp[6]}` : ''} · ${d.toFixed(2)} nm @ ${Math.round(b)}°T <small>(${sp[4]})</small>`]);
+    r.push([sp[3] === 'reef' ? 'Reef' : INSHORE_KINDS.has(sp[3]) ? sp[3][0].toUpperCase() + sp[3].slice(1) : 'Spot', `${sp[2]}${sp[6] ? ` · ${sp[6]}` : ''} · ${d.toFixed(2)} nm @ ${Math.round(b)}°T <small>(${sp[4]})</small>`]);
   }
   for (const [d, w] of wrecksNear(lat, lon)) {
     const kind = w[2] === 'W' ? 'Wreck' : w[2] === 'F' ? 'Fish haven' : 'Obstruction';
@@ -2645,7 +2663,7 @@ map.on('mousemove', (e) => {
   const pos = S.grid === 'td' && inLoran(lat, lng) ? fmtTd(lat, lng) : fmtLL(lat, lng);
   const parts = [`<span class="v">${pos}</span>`];
   if (val === val) parts.push(`<span class="v">${p.fmt(val)}</span>`);
-  if (z === z && z < 0) parts.push(`${Math.round(-z / FATHOM).toLocaleString()} fm`);
+  if (z === z && z < 0) parts.push(depthTxt(z));
   if (S.grid === 'both' && inLoran(lat, lng)) parts.push(`TD ${fmtTd(lat, lng)}`);
   if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lng]); parts.push(`${d.toFixed(1)} nm @ ${Math.round(b)}°T`); }
   $('readout').innerHTML = parts.join('<span class="m">·</span>');
