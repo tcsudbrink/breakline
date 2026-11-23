@@ -296,3 +296,4 @@ button.ghost { background: transparent !important; }
 @media (max-width: 640px) { #anaTom p, #anaTom li { font-size: 12px; } }
 #spotList small.tides { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line); color: #bfe6ff; }
 #spotList small.tides .dim { color: var(--muted); }
+#spotList small.tides b.star { color: #ffe07a; }

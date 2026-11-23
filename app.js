@@ -1707,6 +1707,23 @@ function tideHtml(pts, kind, spKey, ft) {
   tideHtml.wins = wins.filter((w) => w.best); tideHtml.stageNow = stageNow;
   return `${stageNow ? `<b>Now ${stageNow}</b> · ` : ''}${turns}${best ? `<br><b>Fish the ${plan.want} tide:</b> ${best} <span class="dim">(${plan.why})</span>` : ''}`;
 }
+// ---------- Inshore solunar: the next majors/minors at this spot, and whether they line up with the tide to fish ----------
+const SOL_LBL = { overhead: 'moon overhead', underfoot: 'moon underfoot', moonrise: 'moonrise', moonset: 'moonset' };
+function solunarHtml(lat, lon, pts, tideWins) {
+  const now = Date.now(), d = new Date(), t0 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const turns = (pts || []).map((x) => ({ t: x.t, k: x.k }));
+  const days = [Solunar.summary(t0, lat, lon, turns), Solunar.summary(t0 + 864e5, lat, lon, turns)];
+  const wins = days.flatMap((x) => x.windows).filter((w) => w.b > now && w.a < now + 30 * 3600e3).slice(0, 3);
+  if (!wins.length) return '';
+  const items = wins.map((w) => {
+    const tags = w.tags.filter((x) => !/tide/.test(x));
+    const lines = (tideWins || []).find((tw) => Math.min(tw.b, w.b) - Math.max(tw.a, w.a, now) >= 30 * 60e3);
+    const txt = `${w.kind === 'major' ? 'Major' : 'Minor'} ${w.a <= now ? `now–${hmT(w.b)}` : `${dayT(w.a)}${hmT(w.a)}–${hmT(w.b)}`} <span class="dim">${SOL_LBL[w.why]}${tags.length ? ` + ${tags.join(', ')}` : ''}</span>`;
+    return lines ? `<b class="star">★ ${txt} · lines up with your ${lines.stage} tide</b>` : txt;
+  });
+  const p = days[0];
+  return `<br><b>Solunar:</b> ${items.join(' · ')} <span class="dim">(${p.phase}, ${'★'.repeat(p.stars)}${'☆'.repeat(4 - p.stars)})</span>`;
+}
 // ---------- Inshore wind (Open-Meteo hourly, knots) ----------
 const WIND = new Map();
 function windFor(lat, lon) {
@@ -1753,11 +1770,12 @@ async function fillTides(el) {
   for (const li of el.querySelectorAll('li[data-i]')) {
     const s = S.fishSpots[+li.dataset.i], box = li.querySelector('.tides'); if (!s || !box) continue;
     const st = nearestStation(s.lat, s.lon);
-    if (!st) { box.textContent = 'No NOAA tide station within 20 nm.'; addWind(box, s, null); continue; }
+    if (!st) { box.innerHTML = 'No NOAA tide station within 20 nm.' + solunarHtml(s.lat, s.lon, null, []); addWind(box, s, null); continue; }
     hiloFor(st.id).then((pts) => {
       if (my !== tideTok) return;
       box.innerHTML = pts?.length ? `<span class="dim">Tides · ${st.name} (${st.d.toFixed(1)} nm)</span><br>${tideHtml(pts, s.kind, S.species, s.ft)}` : 'Tide forecast unavailable right now.';
       (tideHtml.winsFor ||= new WeakMap()).set(box, pts?.length ? tideHtml.wins : []);
+      box.insertAdjacentHTML('beforeend', solunarHtml(s.lat, s.lon, pts, pts?.length ? tideHtml.wins : []));
       addWind(box, s, pts?.length ? tideHtml.stageNow : null);
     });
   }
@@ -1775,7 +1793,7 @@ function renderSpots() {
   for (const id of ['maxRun', 'depMin']) $(id).closest('.row2').hidden = ins;
   document.querySelector('#fishPanel .hint.long').hidden = ins;
   if (ins) {
-    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station, when to fish them, and the wind.`;
+    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station and when to fish them, the solunar periods (★ = lines up with that tide), and the wind.`;
   } else $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
   el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
 }
