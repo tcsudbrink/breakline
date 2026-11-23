@@ -178,7 +178,7 @@ const S = {
   latest: null, latestHour: null,
   data: {},                       // key -> grid (window-tagged)
   range: {}, auto: true,
-  ov: { breaks: true, iso: false, rings: true, cur: false, relief: false, depth: true, ports: true, wrecks: true, buoys: true, places: true, spots: true, ...store.get('ov', {}) },
+  ov: { breaks: true, iso: false, rings: true, cur: false, relief: false, depth: true, ports: true, wrecks: true, buoys: true, places: true, spots: true, enc: true, drop: true, ...store.get('ov', {}) },
   src: { sst: 'mur', chl: 'cm_l4', ...store.get('src2', {}) },
   species: store.get('species', 'yellowfin'), anaView: 'now', maxRun: store.get('maxRun', 90), fishDepth: store.get('fishDepth', [null, null]),
   grid: store.get('grid', 'll'), tdPair: store.get('tdPair', 'XY'), tdOff: store.get('tdOff', [0, 0]),
@@ -479,15 +479,165 @@ const vOf = (p, t, [lo, hi]) => (p.log ? 10 ** (Math.log10(lo) + t * (Math.log10
 const POP_OPTS = (w = 330) => ({ maxWidth: Math.min(w, window.innerWidth - 110), keepInView: true,
   autoPanPaddingTopLeft: L.point(16, window.innerWidth <= 640 ? 140 : 100), autoPanPaddingBottomRight: L.point(70, 24) });
 const map = L.map('map', {
-  zoomControl: true, attributionControl: true, minZoom: 4, maxZoom: 13, zoomSnap: 0.5, wheelPxPerZoomLevel: 90,
+  zoomControl: true, attributionControl: true, minZoom: 4, maxZoom: 16, zoomSnap: 0.5, wheelPxPerZoomLevel: 90,
   maxBounds: [[WORLD.s, WORLD.w], [WORLD.n, WORLD.e]], maxBoundsViscosity: 0.8, preferCanvas: true,
 }).setView(store.get('view', [38.1, -74.3]), store.get('zoom', 7.5));
 map.zoomControl.setPosition('topright');
-map.attributionControl.setPrefix('').addAttribution('NASA JPL MUR, NOAA CoastWatch/AOML/STAR/ENC, NOAA ETOPO 2022, EU Copernicus Marine, place names © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Not for navigation.');
+map.attributionControl.setPrefix('').addAttribution('NASA JPL MUR, NOAA CoastWatch/AOML/STAR/ENC, NOAA ETOPO 2022 + NCEI coastal DEMs, EU Copernicus Marine, place names © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Not for navigation.');
 map.createPane('data').style.zIndex = 300;
 const reliefPane = map.createPane('relief'); reliefPane.style.zIndex = 320; reliefPane.style.mixBlendMode = 'multiply'; reliefPane.style.pointerEvents = 'none';
 const chartPane = map.createPane('chart'); chartPane.style.zIndex = 450; chartPane.style.pointerEvents = 'none';
 let dataLayer = null, reliefLayer = null;
+// ---------- Inshore: NOAA chart overlay, high-res bottom, drop-offs, inshore picks ----------
+// NOAA's official electronic chart (ENC): channels, buoys and lights, soundings in feet, shoal shading.
+// Multiply blend: the chart's white water drops out and the temps show through.
+const encPane = map.createPane('enc'); encPane.style.zIndex = 400; encPane.style.mixBlendMode = 'multiply'; encPane.style.pointerEvents = 'none';
+const ENC_PARAMS = { ECDISParameters: { version: '10.6', DynamicParameters: { Parameter: [
+  { name: 'DisplayDepthUnits', value: 2 }, { name: 'TwoDepthShades', value: 2 },
+  { name: 'ShallowContour', value: 1.8 }, { name: 'SafetyContour', value: 3.7 }, { name: 'DeepContour', value: 9.1 },
+  { name: 'DisplayCategory', value: '1,2,4' } ] } } };
+const encLayer = L.tileLayer.wms('https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer', {
+  layers: '0,1,2,3,4,5,6,7', format: 'image/png', transparent: true, version: '1.3.0', tileSize: 512, minZoom: 11, maxZoom: 16,
+  pane: 'enc', opacity: 0.85, display_params: JSON.stringify(ENC_PARAMS),
+});
+function syncEnc() {
+  if (S.ov.enc && !map.hasLayer(encLayer)) encLayer.addTo(map); if (!S.ov.enc && map.hasLayer(encLayer)) map.removeLayer(encLayer);
+  // fade the color map under the chart so buoys, channel lines and soundings read (like a boating app)
+  map.getPane('data').style.opacity = encOn() ? 0.5 : 1;
+}
+map.on('zoomend', syncEnc);
+const encOn = () => S.ov.enc && map.getZoom() >= 11;
+
+// High-res bottom (NOAA NCEI coastal DEMs, ~3-10 m inside the inlets and sounds) for the view, once zoomed in past 12
+const DEM_URL = 'https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage';
+let hiTok = 0, hiTimer = null;
+function queueHiDem() { clearTimeout(hiTimer); hiTimer = setTimeout(loadHiDem, 350); }
+async function loadHiDem() {
+  if (map.getZoom() < 12 || !(S.ov.drop || (S.prod === 'fish' && SPECIES[S.species]?.inshore))) { if (S.data.hidem) { S.data.hidem = null; S.geo.drop = null; chart.draw(); } return; }
+  const b = map.getBounds().pad(0.1), sz = map.getSize();
+  const s = b.getSouth(), n = b.getNorth(), w = b.getWest(), e = b.getEast();
+  const H0 = S.data.hidem;
+  if (H0 && s >= H0.bb[0] && n <= H0.bb[1] && w >= H0.bb[2] && e <= H0.bb[3] && Math.abs(H0.z - map.getZoom()) < 0.6) return;
+  const W = Math.min(800, Math.round(sz.x * 1.2 / 1.6)), H = Math.min(800, Math.round(sz.y * 1.2 / 1.6));
+  const my = ++hiTok;
+  try {
+    const url = `${DEM_URL}?bbox=${w.toFixed(5)},${s.toFixed(5)},${e.toFixed(5)},${n.toFixed(5)}&bboxSR=4326&imageSR=4326&size=${W},${H}&format=bsq&pixelType=F32&interpolation=RSP_BilinearInterpolation&f=image`;
+    const buf = await (await fetch(url)).arrayBuffer();
+    if (my !== hiTok || buf.byteLength < W * H * 4) return;
+    const raw = new Float32Array(buf.slice(0, W * H * 4)), v = new Float32Array(W * H);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const x = raw[(H - 1 - j) * W + i]; v[j * W + i] = x === x && Math.abs(x) < 12000 ? x : NaN; }
+    const dlat = (n - s) / H, dlon = (e - w) / W;
+    S.data.hidem = { nx: W, ny: H, lat0: s + dlat / 2, lon0: w + dlon / 2, dlat, dlon, v, bb: [s, n, w, e], z: map.getZoom() };
+    buildDrops();
+    if (S.prod === 'fish' && SPECIES[S.species]?.inshore) buildFish();
+    chart.draw();
+  } catch (err) { console.warn('hi-res depth', err); }
+}
+// Drop-offs: where the bottom falls 6+ ft per 100 ft, between 2 and 80 ft of water
+function buildDrops() {
+  const g = S.data.hidem; if (!g) return;
+  const { nx, ny, v } = g, img = new ImageData(nx, ny), slope = new Float32Array(nx * ny).fill(NaN);
+  const dy = g.dlat * 111320;
+  for (let j = 2; j < ny - 2; j++) {
+    const dx = g.dlon * 111320 * Math.cos((g.lat0 + j * g.dlat) * Math.PI / 180);
+    for (let i = 2; i < nx - 2; i++) {
+      const k = j * nx + i, z = v[k]; if (!(z < -0.6 && z > -25)) continue;
+      const gx = (v[k + 2] - v[k - 2]) / (4 * dx), gy = (v[k + 2 * nx] - v[k - 2 * nx]) / (4 * dy);
+      const m = Math.hypot(gx, gy); if (m !== m) continue;
+      slope[k] = m;
+      if (m < 0.06) continue;
+      const a = Math.min(1, (m - 0.06) / 0.18), o = k * 4;
+      img.data[o] = 255; img.data[o + 1] = Math.round(120 - 80 * a); img.data[o + 2] = 20; img.data[o + 3] = Math.round(70 + 150 * a);
+    }
+  }
+  const cv = document.createElement('canvas'); cv.width = nx; cv.height = ny;
+  const cx = cv.getContext('2d'); cx.putImageData(img, 0, 0);
+  // flip so north is up (rows run south -> north)
+  const up = document.createElement('canvas'); up.width = nx; up.height = ny;
+  const ux = up.getContext('2d'); ux.translate(0, ny); ux.scale(1, -1); ux.drawImage(cv, 0, 0);
+  // the steepest edge in each ~block, with its top and bottom depths, for the inshore picks
+  const blk = Math.max(6, Math.round(nx / 20)), pts = [];
+  for (let J = 0; J < ny; J += blk) for (let I = 0; I < nx; I += blk) {
+    let best = -1, bk = -1;
+    for (let j = J; j < Math.min(ny, J + blk); j++) for (let i = I; i < Math.min(nx, I + blk); i++) { const k = j * nx + i; if (slope[k] > best) { best = slope[k]; bk = k; } }
+    if (best < 0.07) continue;
+    const j = Math.floor(bk / nx), i = bk % nx; let lo = 0, hi = -1e9;
+    for (let dj = -4; dj <= 4; dj++) for (let di = -4; di <= 4; di++) { const x = v[(j + dj) * nx + i + di]; if (x === x && x < -0.3) { lo = Math.min(lo, x); hi = Math.max(hi, x); } }
+    if (hi < -1e8) continue;
+    pts.push({ lat: g.lat0 + j * g.dlat, lon: g.lon0 + i * g.dlon, top: -hi * 3.28084, bot: -lo * 3.28084, slope: best });
+  }
+  S.geo.drop = { img: up, bb: g.bb, pts };
+}
+function drawDrops(ctx) {
+  const D = S.geo.drop; if (!D || !S.ov.drop || map.getZoom() < 12) return;
+  const [s, n, w, e] = D.bb, [x0, y0] = project(n, w), [x1, y1] = project(s, e);
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 0.9; ctx.drawImage(D.img, x0, y0, x1 - x0, y1 - y0); ctx.restore();
+}
+function depthAt(lat, lon) { const h = sample(S.data.hidem, lat, lon); return h === h ? h : sample(S.data.bathy, lat, lon); }
+
+// ---------- Inshore species: rank the structure on screen ----------
+const INSHORE_WHY = {
+  inlet: 'inlet: moving water funnels bait through on both tides',
+  jetty: 'rocks along the jetty hold bait and break the current',
+  pier: 'pilings hold bait and shade; fish the up-current side',
+  bridge: 'bridge pilings and shadow lines; best on moving tide',
+  rock: 'hard bottom / rocks',
+  shoal: 'shoal or bar: fish the edges where it drops to the channel',
+  reef: 'reef or oyster bottom holds bait',
+  drop: 'drop-off: fish sit at the base and ambush bait washing off the edge',
+};
+const INSHORE_LBL = { inlet: 'Inlet', jetty: 'Jetty', pier: 'Pier', bridge: 'Bridge', rock: 'Rocks', shoal: 'Shoal', reef: 'Reef', drop: 'Drop-off' };
+function inshoreCandidates() {
+  const b = map.getBounds().pad(-0.04), out = [];
+  const inV = (la, lo) => la > b.getSouth() && la < b.getNorth() && lo > b.getWest() && lo < b.getEast();
+  for (const [name, la, lo] of PORTS) if (inV(la, lo)) out.push({ lat: la, lon: lo, kind: 'inlet', name });
+  for (const r of SPOTS || []) {
+    if (!inV(r[0], r[1])) continue;
+    const k = r[3] === 'reef' ? 'reef' : r[3] === 'pier' ? (/bridge/i.test(r[2]) ? 'bridge' : 'pier') : r[3] === 'jetty' ? 'jetty' : r[3] === 'rock' ? 'rock'
+      : r[3] === 'shoal/bar' ? 'shoal' : r[3] === 'inshore' ? (/bridge/i.test(r[2]) ? 'bridge' : 'shoal') : null;
+    if (k) out.push({ lat: r[0], lon: r[1], kind: k, name: r[2] });
+  }
+  for (const [la, lo, name, kind] of PLACES || []) {
+    if (kind !== 'sea' || !inV(la, lo)) continue;
+    const k = /inlet|pass\b|cut\b|narrows|gut\b/i.test(name) ? 'inlet' : /shoal|bar\b|flats?\b|lump|point/i.test(name) ? 'shoal' : /channel/i.test(name) ? 'drop' : null;
+    if (k) out.push({ lat: la, lon: lo, kind: k, name });
+  }
+  for (const p of S.geo.drop?.pts || []) if (inV(p.lat, p.lon)) out.push({ ...p, kind: 'drop', name: null });
+  return out;
+}
+function tempNear(la, lo) {
+  const g = S.fishT || S.data.sst; let t = sample(g, la, lo); if (t === t) return t;
+  for (const r of [0.02, 0.04, 0.07, 0.1]) for (let a = 0; a < 8; a++) { t = sample(g, la + r * Math.sin(a * Math.PI / 4), lo + r * Math.cos(a * Math.PI / 4)); if (t === t) return t; }
+  return NaN;
+}
+function inshoreSpots(sp) {
+  const cand = inshoreCandidates(), res = [];
+  for (const c of cand) {
+    const t = tempNear(c.lat, c.lon), tf = t === t ? tempFit(t, sp.t) : 0.5;
+    const z = depthAt(c.lat, c.lon), ft = z < 0 ? -z * 3.28084 : NaN;
+    let df;
+    if (c.kind === 'drop') { const lo = Math.max(c.top, sp.ft[0]), hi = Math.min(c.bot, sp.ft[1]); df = hi > lo ? 1 : 0.35; }
+    else if (ft !== ft) df = ['pier', 'jetty', 'inlet', 'bridge'].includes(c.kind) ? 0.75 : 0.4;
+    else df = ft >= sp.ft[0] && ft <= sp.ft[1] ? 1 : ft < sp.ft[0] ? 0.5 : Math.max(0.25, 1 - (ft - sp.ft[1]) / (sp.ft[1] * 2));
+    const like = sp.like[c.kind] || 0.3;
+    const sc = Math.round(100 * tf * like * (0.4 + 0.6 * df));
+    if (sc < 15) continue;
+    const why = [];
+    why.push(`${c.name ? `${c.name} · ` : ''}${INSHORE_LBL[c.kind]}`);
+    if (c.kind === 'drop') { if (c.bot - c.top < 3) continue; why.push(`${Math.round(c.top)} → ${Math.round(c.bot)} ft`); } else if (ft === ft) why.push(`${Math.round(ft)} ft`);
+    if (t === t) why.push(`${t.toFixed(1)}°F${tf >= 1 ? '' : tf > 0 ? ` (${sp.t[1]}-${sp.t[2]}° is best)` : ' (outside their range)'}`);
+    why.push(INSHORE_WHY[c.kind]);
+    res.push({ lat: c.lat, lon: c.lon, score: sc, why, kind: c.kind, name: c.name });
+  }
+  res.sort((a, b) => b.score - a.score);
+  const out = [], per = {};
+  for (const r of res) {
+    if (out.some((o) => rangeBearing([o.lat, o.lon], [r.lat, r.lon])[0] < 0.35 || (r.name && o.name === r.name))) continue;
+    if ((per[r.kind] = (per[r.kind] || 0) + 1) > 3) continue;     // keep the list varied
+    out.push(r); if (out.length >= 8) break;
+  }
+  return out;
+}
 
 const Chart = L.Layer.extend({
   onAdd(m) {
@@ -591,6 +741,7 @@ function drawChart(ctx, size) {
     }
   }
 
+  drawDrops(ctx);
   if (S.ov.depth && S.geo.depth.length) {
     const show = new Set(z >= 8.5 ? [...DEPTHS_MAJOR, ...DEPTHS_MINOR] : z >= 7.5 ? [...DEPTHS_MAJOR, 20, 30, 200] : z >= 6 ? DEPTHS_MAJOR : [100, 1000]);
     // inshore lines once you're zoomed in on the sounds, bays and beaches (6 ft only when closer still)
@@ -599,6 +750,7 @@ function drawChart(ctx, size) {
     for (const c of S.geo.depth) {
       if (!show.has(c.fm)) continue;
       const major = DEPTHS_MAJOR.includes(c.fm), inshore = DEPTHS_INSHORE.includes(c.fm);
+      if (inshore && encOn()) continue;          // NOAA chart has the real shoal lines
       if (inshore) {
         ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2; strokeRings(ctx, c.rings);
         ctx.strokeStyle = 'rgba(10,30,60,.9)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 3]);
@@ -615,7 +767,7 @@ function drawChart(ctx, size) {
     }
   }
 
-  if (S.geo.land.length) {
+  if (S.geo.land.length && !encOn()) {            // zoomed in, NOAA's chart has the real shoreline
     ctx.fillStyle = S.prod === 'bottom' ? '#6b6352' : '#2b2f33'; fillRings(ctx, S.geo.land);
     ctx.strokeStyle = '#c9d1d9'; ctx.lineWidth = 1; strokeRings(ctx, S.geo.land);
   }
@@ -1376,7 +1528,17 @@ const SPECIES = {
   blueP: { label: 'Blue marlin', ocean: 'pac', t: [76, 79, 86, 90], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
   black: { label: 'Black marlin', ocean: 'pac', t: [75, 78, 85, 89], fm: 30, w: { brk: 0.3, chl: 0.2, bot: 0.4, eddy: 0.1 } },
   sailP: { label: 'Sailfish', ocean: 'pac', t: [77, 80, 86, 90], fm: 20, w: { brk: 0.4, chl: 0.3, bot: 0.2, eddy: 0.1 } },
+  // Inshore (sounds, bays, inlets, beaches). ft = depth window; like = how much each kind of structure matters.
+  // region: fl = Florida only, north = Outer Banks and north, south = Chesapeake and south
+  flounder: { label: 'Flounder', ocean: 'atl', inshore: true, t: [50, 58, 76, 84], ft: [4, 45], like: { drop: 1, inlet: 0.9, reef: 0.85, shoal: 0.7, bridge: 0.65, pier: 0.6, jetty: 0.65, rock: 0.55 } },
+  striper: { label: 'Striped bass', ocean: 'atl', inshore: true, region: 'north', t: [45, 52, 66, 74], ft: [3, 60], like: { inlet: 1, jetty: 1, bridge: 0.95, rock: 0.9, drop: 0.8, shoal: 0.8, pier: 0.6, reef: 0.5 } },
+  reddrum: { label: 'Red drum', ocean: 'atl', inshore: true, t: [52, 62, 82, 88], ft: [1, 20], like: { shoal: 1, inlet: 0.9, jetty: 0.9, reef: 0.75, drop: 0.65, rock: 0.6, pier: 0.6, bridge: 0.6 } },
+  trout: { label: 'Speckled trout', ocean: 'atl', inshore: true, region: 'south', t: [55, 64, 80, 86], ft: [2, 15], like: { drop: 1, shoal: 0.9, reef: 0.85, bridge: 0.7, inlet: 0.6, rock: 0.6, pier: 0.6, jetty: 0.6 } },
+  snook: { label: 'Snook', ocean: 'atl', inshore: true, region: 'fl', t: [64, 72, 86, 90], ft: [2, 25], like: { bridge: 1, jetty: 1, inlet: 1, pier: 0.9, drop: 0.6, rock: 0.6, shoal: 0.5, reef: 0.4 } },
+  tarpon: { label: 'Tarpon', ocean: 'atl', inshore: true, region: 'fl', t: [72, 77, 88, 92], ft: [4, 40], like: { inlet: 1, bridge: 0.9, drop: 0.8, jetty: 0.7, pier: 0.6, shoal: 0.5, reef: 0.4, rock: 0.4 } },
 };
+for (const v of Object.values(SPECIES)) if (v.inshore) { v.fm = 0; v.w = { brk: 0.2, chl: 0.2, bot: 0.6, eddy: 0 }; }
+const REGION_OK = { fl: (la, lo) => la < 30.8 && lo > -87.7, north: (la) => la > 34.5, south: (la) => la < 39.8 };
 // Which ocean a point is in. The Central American isthmus divide, roughly, from Mexico to Panama.
 function oceanAt(lat, lon) {
   if (lon < -98) return 'pac';
@@ -1388,7 +1550,9 @@ function oceanAt(lat, lon) {
   if (lat < 7.5) return 'pac';                      // south of the isthmus: Gulf of Panama and beyond
   return 'atl';
 }
-function speciesFor(ocean) { return Object.entries(SPECIES).filter(([, v]) => v.ocean === ocean || v.ocean === 'both'); }
+function speciesFor(ocean, la, lo) {
+  return Object.entries(SPECIES).filter(([, v]) => (v.ocean === ocean || v.ocean === 'both') && (!v.region || la == null || REGION_OK[v.region](la, lo)));
+}
 function tempFit(t, [a, b, c, d]) { return t < a || t > d ? 0 : t < b ? (t - a) / (b - a) : t > c ? (d - t) / (d - c) : 1; }
 function pctNorm(arr, p = 0.95) { const v = Array.from(arr).filter((x) => x === x && x > 0).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length * p)] || 1 : 1; }
 function maxFilter(g, vals, r) {
@@ -1452,6 +1616,7 @@ function buildFish() {
     const pb = Math.min(1, (brk[k] || 0) / nb), pc = Math.min(1, (chlE[k] || 0) / nc), po = Math.min(1, (bot[k] || 0) / nbo), pe = eddy ? Math.min(1, (eddy[k] || 0) / ne) : 0;
     const struct = sp.w.brk * pb + sp.w.chl * pc + sp.w.bot * po + sp.w.eddy * pe;
     let s = 100 * tf * (0.3 + 0.7 * struct);
+    if (sp.inshore) { const ftd = fm * 6; if (ftd < sp.ft[0] || ftd > sp.ft[1] * 1.5) s *= 0.3; score[k] = s; parts.set([pb, pc, po, pe], k * 4); continue; }
     if (fm < sp.fm) s *= 0.25;
     // Strong current is hard to fish (lines blow out, drift too fast): full credit to 1.2 kt, tapering hard after that.
     // Edges of the Stream still score; the middle of it doesn't.
@@ -1480,7 +1645,7 @@ function buildFish() {
   S.data.fish = { ...g, v: score, date: (S.data.goes?.date || sst.date), times: S.data.goes?.times?.slice(-1) };
   S.fishT = { ...g, v: T, mask: hourly, date: S.data.fish.date, times: S.data.fish.times };
   S.fishCur = { ...g, v: cur };
-  S.fishSpots = spots;
+  S.fishSpots = sp.inshore ? inshoreSpots(sp) : spots;
   renderSpots();
 }
 function drawHotspots(ctx) {
@@ -1500,8 +1665,13 @@ function renderSpots() {
     return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home}</small></li>`;
   }).join('') || '<li><small>Nothing scores well in range. Try another species or a longer run.</small></li>';
   const fi = S.fishInfo;
-  $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
-  el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
+  const ins = !!SPECIES[S.species]?.inshore;
+  for (const id of ['maxRun', 'depMin']) $(id).closest('.row2').hidden = ins;
+  document.querySelector('#fishPanel .hint.long').hidden = ins;
+  if (ins) {
+    $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Tide and current timing matter more inshore than anything here.`;
+  } else $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
+  el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
 }
 
 // ---------- Ocean analysis: outline the features, then write up the water and where to go ----------
@@ -2385,7 +2555,7 @@ document.querySelectorAll('#pkTabs button').forEach((b) => { b.onclick = () => o
 // Hot-spot panel controls
 // Species list follows the ocean on screen; each ocean remembers its own last pick
 const spSel = $('species');
-let spOcean = null;
+let spOcean = null, spKey = null;
 // The ocean follows your home port (a Pacific port only gets Pacific fish); no port set -> what's on screen
 function fishOcean() {
   const hp2 = PORTS.find((x) => x[0] === S.home);
@@ -2393,14 +2563,17 @@ function fishOcean() {
   const c = map.getCenter(); return oceanAt(c.lat, c.lng);
 }
 function fillSpecies() {
-  const ocean = fishOcean();
-  if (ocean === spOcean) return false;
-  spOcean = ocean; spSel.innerHTML = '';
-  const og = document.createElement('optgroup'); og.label = ocean === 'pac' ? 'Pacific' : 'Atlantic, Gulf & Caribbean';
-  for (const [k, v] of speciesFor(ocean)) { const o = document.createElement('option'); o.value = k; o.textContent = v.label; og.appendChild(o); }
-  spSel.appendChild(og);
+  const ocean = fishOcean(), hp3 = PORTS.find((x) => x[0] === S.home), c0 = map.getCenter();
+  const la = hp3 ? hp3[1] : c0.lat, lo = hp3 ? hp3[2] : c0.lng, list = speciesFor(ocean, la, lo), key = ocean + list.map(([k]) => k).join();
+  if (key === spKey) return false;
+  spOcean = ocean; spKey = key; spSel.innerHTML = '';
+  for (const [lbl, ins] of [[ocean === 'pac' ? 'Offshore · Pacific' : 'Offshore', false], ['Inshore', true]]) {
+    const og = document.createElement('optgroup'); og.label = lbl;
+    for (const [k, v] of list) { if (!!v.inshore !== ins) continue; const o = document.createElement('option'); o.value = k; o.textContent = v.label; og.appendChild(o); }
+    if (og.children.length) spSel.appendChild(og);
+  }
   const keep = store.get(`species_${ocean}`, ocean === 'pac' ? 'dorado' : S.species);
-  S.species = SPECIES[keep] && speciesFor(ocean).some(([k]) => k === keep) ? keep : speciesFor(ocean)[0][0];
+  S.species = SPECIES[keep] && list.some(([k]) => k === keep) ? keep : list[0][0];
   spSel.value = S.species; syncAnaSpecies();
   return true;
 }
@@ -2408,7 +2581,7 @@ function syncAnaSpecies() { const a = document.getElementById('anaSpecies'); if 
 fillSpecies();
 map.on('moveend', () => { if (fillSpecies() && (S.prod === 'fish' || S.prod === 'ana')) { buildFish(); if (S.prod === 'ana') { buildAnalysis(); renderAnalysis(); } autoRange(true); renderRaster(); drawLegend(); chart.draw(); } });
 spSel.onchange = () => {
-  S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); syncAnaSpecies();
+  S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); syncAnaSpecies(); queueHiDem();
   buildFish(); if (S.prod === 'ana') { buildAnalysis(); renderAnalysis(); } autoRange(true); renderRaster(); drawLegend(); chart.draw();
 };
 syncAnaSpecies();
@@ -2529,6 +2702,8 @@ document.querySelectorAll('[data-ov]').forEach((cb) => {
     if (cb.dataset.ov === 'relief') renderRelief();
     if (cb.dataset.ov === 'iso' && cb.checked && PRODUCTS[S.prod].sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
     if (cb.dataset.ov === 'buoys') drawBuoys();
+    if (cb.dataset.ov === 'enc') syncEnc();
+    if (cb.dataset.ov === 'drop') queueHiDem();
     chart.draw();
   };
 });
@@ -2640,7 +2815,7 @@ function readings(lat, lon) {
   add('Front strength', D.ftle, PRODUCTS.ftle.fmt);
   add('Salinity', D.sss, PRODUCTS.sss.fmt);
   add('Hot-spot score', D.fish, PRODUCTS.fish.fmt);
-  const z = sample(D.bathy, lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
+  const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
   const c = curAt(lat, lon);
   if (c) r.push(['Current', `${(Math.hypot(c[0], c[1]) * 1.94384).toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`]);
   for (const [d, b, sp] of spotsNear(lat, lon)) {
@@ -2659,7 +2834,7 @@ function readings(lat, lon) {
 
 map.on('mousemove', (e) => {
   const { lat, lng } = e.latlng, p = PRODUCTS[S.prod], g = PG();
-  const val = S.prod === 'bottom' ? NaN : sample(g, lat, lng), z = sample(S.data.bathy, lat, lng), home = PORTS.find((x) => x[0] === S.home);
+  const val = S.prod === 'bottom' ? NaN : sample(g, lat, lng), z = depthAt(lat, lng), home = PORTS.find((x) => x[0] === S.home);
   const pos = S.grid === 'td' && inLoran(lat, lng) ? fmtTd(lat, lng) : fmtLL(lat, lng);
   const parts = [`<span class="v">${pos}</span>`];
   if (val === val) parts.push(`<span class="v">${p.fmt(val)}</span>`);
@@ -2850,4 +3025,8 @@ chart = new Chart().addTo(map);
 drawWpts();
 refresh();
 window.__S = S; window.__map = map;
+// inshore layers: NOAA chart + high-res bottom follow the view
+syncEnc();
+map.on('moveend', queueHiDem);
+queueHiDem();
 })();
