@@ -283,3 +283,14 @@ button.ghost { background: transparent !important; }
 #anaBody li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 1.4; cursor: pointer; }
 #anaBody li:hover b { color: var(--accent); }
 #anaBody small { color: var(--muted); font-variant-numeric: tabular-nums; }
+#anaSpecies { width: 100%; }
+#anaSeg { display: flex; gap: 3px; background: #0e1c2c; border: 1px solid var(--line); border-radius: 18px; padding: 3px; margin: 6px 0 2px; }
+#anaSeg button { flex: 1; background: none !important; border: 0 !important; color: var(--muted); padding: 5px 8px; border-radius: 14px; cursor: pointer; font: 600 12px system-ui, sans-serif; }
+#anaSeg button.on { background: #c39bff !important; color: #120626; }
+#anaSeg button[data-v=now].on { background: var(--accent) !important; color: #04121d; }
+#anaTom h4 { margin: 12px 0 4px; font-size: 12.5px; color: #c39bff; text-transform: uppercase; letter-spacing: .04em; }
+#anaTom p { margin: 4px 0; font-size: 13px; line-height: 1.45; }
+#anaTom ul { list-style: none; padding: 0; margin: 4px 0; }
+#anaTom li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; cursor: pointer; }
+#anaTom small { color: var(--muted); }
+@media (max-width: 640px) { #anaTom p, #anaTom li { font-size: 12px; } }

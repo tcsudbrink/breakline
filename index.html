@@ -125,7 +125,10 @@
 <!-- Ocean analysis write-up -->
 <section id="anaPanel" class="panel side" hidden>
   <h3>Ocean analysis <button id="anaClose" class="x" aria-label="Hide write-up (outlines stay on the chart)" title="Hide write-up (outlines stay on the chart)">&times;</button></h3>
+  <div class="row2"><select id="anaSpecies" aria-label="Species"></select></div>
+  <div id="anaSeg"><button data-v="now" class="on">Right now</button><button data-v="tom">Tomorrow</button></div>
   <div id="anaBody"></div>
+  <div id="anaTom" hidden></div>
   <div class="row"><button id="anaCopy">Copy write-up</button></div>
 </section>
 

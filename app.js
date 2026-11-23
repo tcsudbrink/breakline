@@ -177,7 +177,7 @@ const S = {
   range: {}, auto: true,
   ov: { breaks: true, iso: false, rings: true, cur: false, relief: false, depth: true, ports: true, wrecks: true, buoys: true, places: true, spots: true, ...store.get('ov', {}) },
   src: { sst: 'mur', chl: 'cm_l4', ...store.get('src2', {}) },
-  species: store.get('species', 'yellowfin'), maxRun: store.get('maxRun', 90), fishDepth: store.get('fishDepth', [null, null]),
+  species: store.get('species', 'yellowfin'), anaView: 'now', maxRun: store.get('maxRun', 90), fishDepth: store.get('fishDepth', [null, null]),
   grid: store.get('grid', 'll'), tdPair: store.get('tdPair', 'XY'), tdOff: store.get('tdOff', [0, 0]),
   brk: store.get('brk2', 0.3),   // °F per nm; MUR is smooth, so its strongest fronts run ~0.5-1
   home: store.get('home', 'Ocean City Inlet'),
@@ -1623,6 +1623,7 @@ function drawAnalysis(ctx, size, boxes) {
     tag(ctx, txt, x, y - 16, 'center', '#fff', '#000'); boxes.push([x - 30, y - 26, x + 30, y - 6]);
   }
   ctx.restore(); ctx.textAlign = 'center';
+  drawTomorrow(ctx);
 }
 function renderAnalysis() {
   const el = $('anaBody'); if (!el) return;
@@ -1667,6 +1668,124 @@ function renderAnalysis() {
     if (li.tagName !== 'LI') return;
     li.onclick = () => { const [la, lo] = li.dataset.ll.split(',').map(Number); map.setView([la, lo], Math.max(map.getZoom(), 9)); openReading(L.latLng(la, lo), 'Analysis'); };
   });
+  buildTomorrow();
+}
+
+// ---------- Analysis: tomorrow (prediction) ----------
+// Today's features carried 24 h forward by the forecast currents (forward trajectories, 2-hour steps).
+// The water keeps its temperature; only its position changes. Eddies themselves crawl a few miles a day.
+function makeVel(frames) {
+  return (la, lo, t) => {
+    const f = clamp(t / 6, 0, frames.length - 1), k = Math.min(frames.length - 2, Math.floor(f)), a = f - k, A = frames[k], B = frames[k + 1] || A;
+    const u = (1 - a) * sample(A, la, lo, A.u) + a * sample(B, la, lo, B.u), v = (1 - a) * sample(A, la, lo, A.vv) + a * sample(B, la, lo, B.vv);
+    return u === u && v === v ? [v * 3600 / 111320, u * 3600 / (111320 * Math.cos(la * Math.PI / 180))] : null;   // deg per hour
+  };
+}
+function advect(vel, la, lo, H = 24) {
+  for (let t = 0; t < H; t += 2) {
+    const v1 = vel(la, lo, t); if (!v1) return null;
+    const v2 = vel(la + v1[0], lo + v1[1], t + 1) || v1;
+    la += v2[0] * 2; lo += v2[1] * 2;
+  }
+  return [la, lo];
+}
+let TOM = null, tomToken = 0;
+async function buildTomorrow() {
+  const my = ++tomToken, A = ANA, el = $('anaTom');
+  if (!A || !el) return;
+  if (S.date) { TOM = null; el.innerHTML = '<p class="hint">The tomorrow prediction runs off today\'s data. Tap Latest to go back to today.</p>'; return; }
+  el.innerHTML = '<p class="hint">Working out tomorrow…</p>';
+  let frames;
+  try {
+    const win = windowFor(0.083, 300);
+    frames = await Promise.all([0, 6, 12, 18, 24].map((h) => fcFrame(h, win)));
+  } catch (e) { if (my === tomToken) el.innerHTML = '<p class="hint">The current forecast didn\'t load, so there is no prediction right now. Try again in a minute.</p>'; return; }
+  if (my !== tomToken) return;
+  const vel = makeVel(frames), cache = new Map();
+  const mv = (la, lo) => { const k = `${la.toFixed(4)},${lo.toFixed(4)}`; if (!cache.has(k)) cache.set(k, advect(vel, la, lo)); return cache.get(k); };
+  // breaks: move every on-screen segment
+  const segs = [];
+  for (const s of S.geo.breaks) {
+    if (!inView(s.a[0], s.a[1], 0.1)) continue;
+    const a = mv(s.a[0], s.a[1]), b = mv(s.b[0], s.b[1]); if (a && b) segs.push({ a, b, k: s.k });
+    if (segs.length > 4000) break;
+  }
+  const shift = (la, lo) => { const p = mv(la, lo); if (!p) return null; const [d, b] = rangeBearing([la, lo], p); return { lat: p[0], lon: p[1], d, b }; };
+  const brks = A.breaks.map((b) => ({ ...b, to: shift(b.lat, b.lon) }));
+  const spots = (S.fishSpots || []).slice(0, 3).map((s, i) => ({ ...s, n: i + 1, to: shift(s.lat, s.lon) }));
+  // strongest current tomorrow on screen
+  const F = frames[frames.length - 1]; let mx = null;
+  for (let j = 0; j < F.ny; j += 2) for (let i = 0; i < F.nx; i += 2) {
+    const k = j * F.nx + i, u = F.u[k], v = F.vv[k]; if (u !== u || v !== v) continue;
+    const la = F.lat0 + j * F.dlat, lo = F.lon0 + i * F.dlon; if (!inView(la, lo)) continue;
+    const kt = Math.hypot(u, v) * 1.94384; if (!mx || kt > mx.kt) mx = { kt, lat: la, lon: lo, dir: (Math.atan2(u, v) * 180 / Math.PI + 360) % 360 };
+  }
+  TOM = { segs, brks, spots, cur: mx, when: fcTime(24) };
+  chart.draw();
+  renderTomorrow();
+  // tomorrow's wind/seas where you'd start, and the best times from your port
+  const s1 = spots[0]?.to || spots[0];
+  if (s1) tomWeather(s1.lat, s1.lon).then((h) => { if (my === tomToken && $('tomWx')) $('tomWx').innerHTML = h; }).catch(() => { if ($('tomWx')) $('tomWx').textContent = 'Weather forecast unavailable right now.'; });
+  if (A.home) bestTimesHtml(A.home[1], A.home[2], 1).then((h) => { if (my === tomToken && $('tomBt')) $('tomBt').innerHTML = h; }).catch(() => {});
+}
+async function tomWeather(lat, lon) {
+  const qs = `latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&forecast_days=3&timezone=auto`;
+  const [w, m] = await Promise.all([
+    omJson(`https://api.open-meteo.com/v1/forecast?${qs}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn`),
+    omJson(`https://marine-api.open-meteo.com/v1/marine?${qs}&hourly=wave_height,wave_period`).catch(() => null),
+  ]);
+  const t = w.hourly.time, day = t.find((x) => x.slice(0, 10) > t[0].slice(0, 10))?.slice(0, 10);
+  const idx = t.map((x, i) => [x, i]).filter(([x]) => x.slice(0, 10) === day && +x.slice(11, 13) >= 6 && +x.slice(11, 13) <= 14).map(([, i]) => i);
+  if (!idx.length) return 'No forecast for tomorrow here.';
+  const pick = (arr) => idx.map((i) => arr[i]).filter((x) => x != null);
+  const ws = pick(w.hourly.wind_speed_10m), gs = pick(w.hourly.wind_gusts_10m), wd = pick(w.hourly.wind_direction_10m);
+  const dirAvg = (Math.atan2(wd.reduce((s, d) => s + Math.sin(d * Math.PI / 180), 0), wd.reduce((s, d) => s + Math.cos(d * Math.PI / 180), 0)) * 180 / Math.PI + 360) % 360;
+  let seas = '';
+  if (m?.hourly) { const hs = pick(m.hourly.wave_height).map((x) => x * 3.28084), ps = pick(m.hourly.wave_period); if (hs.length) seas = `, seas ${Math.min(...hs).toFixed(0)}-${Math.max(...hs).toFixed(0)} ft${ps.length ? ` @ ${Math.round(ps.reduce((a, b) => a + b) / ps.length)} s` : ''}`; }
+  const hi = Math.max(...ws), rough = hi >= 20 || (m?.hourly && Math.max(...pick(m.hourly.wave_height)) * 3.28084 >= 6);
+  return `${new Date(day + 'T12:00').toLocaleDateString('en-US', { weekday: 'long' })} 6 AM-2 PM at #1: wind ${card(dirAvg)} ${Math.round(Math.min(...ws))}-${Math.round(hi)} kt, gusts ${Math.round(Math.max(...gs))}${seas}.${rough ? ' <b>Sporty: check it again in the morning.</b>' : ''}`;
+}
+function renderTomorrow() {
+  const el = $('anaTom'), T = TOM, A = ANA; if (!el || !T || !A) return;
+  const port = A.home ? A.home[0] : 'port';
+  const run = (p) => { const r = A.run(p.lat, p.lon); return r ? `${r[0].toFixed(0)} nm @ ${Math.round(r[1])}°T from ${port}` : ''; };
+  const mvTxt = (to) => (!to ? 'no current data there' : to.d < 1 ? 'stays about where it is' : `moves ${to.d.toFixed(0)} nm ${card(to.b)}`);
+  const h = [];
+  h.push(`<p class="hint">Prediction for ${niceHour(T.when)}: today's water pushed 24 h by the Copernicus current forecast. Temps don't change in this, only where the water goes. Purple dashed lines on the chart are tomorrow's breaks; arrows show where the top spots' water drifts.</p>`);
+  const s = T.spots;
+  if (s.length) {
+    const s1 = s[0], p1 = s1.to || s1;
+    let plan = `The water at today's #1 ${mvTxt(s1.to)}. Tomorrow, start around ${run(p1)}${nameNear(p1.lat, p1.lon) ? `, ${nameNear(p1.lat, p1.lon)}` : ''}.`;
+    for (const x of s.slice(1)) plan += ` #${x.n} ${mvTxt(x.to)}${x.to ? ` (${run(x.to)})` : ''}.`;
+    h.push(`<h4>Where I'd go tomorrow · ${A.sp.label}</h4><p>${plan}</p><ul>${s.map((x) => { const p = x.to || x; return `<li data-ll="${p.lat},${p.lon}"><b>#${x.n} tomorrow</b> <small>${fmtLL(p.lat, p.lon)}${inLoran(p.lat, p.lon) ? ` · TD ${fmtTd(p.lat, p.lon)}` : ''}</small></li>`; }).join('')}</ul>`);
+  }
+  if (T.brks.length) h.push(`<h4>Breaks tomorrow</h4><ul>${T.brks.map((b) => `<li data-ll="${(b.to || b).lat},${(b.to || b).lon}"><b>${b.id}</b> ${mvTxt(b.to)}${b.to ? ` (${run(b.to)})` : ''}.</li>`).join('')}</ul>`);
+  if (T.cur) h.push(`<h4>Current tomorrow</h4><p>Strongest on screen ${T.cur.kt.toFixed(1)} kt setting ${card(T.cur.dir)}${A.cur ? ` (today ${A.cur.v.toFixed(1)} kt)` : ''}.</p>`);
+  if (A.eddies.length) h.push(`<p class="hint">Eddies crawl a few miles a day, so expect them close to where they are today.</p>`);
+  h.push(`<h4>Weather tomorrow</h4><p id="tomWx">Loading…</p><h4>Best times tomorrow · ${port}</h4><div id="tomBt" class="hint">Loading…</div>`);
+  const keepWx = $('tomWx')?.innerHTML, keepBt = $('tomBt')?.innerHTML;
+  el.innerHTML = h.join('');
+  if (keepWx && keepWx !== 'Loading…') $('tomWx').innerHTML = keepWx;
+  if (keepBt && keepBt !== 'Loading…') $('tomBt').innerHTML = keepBt;
+  el.querySelectorAll('li[data-ll]').forEach((li) => { li.onclick = () => { const [la, lo] = li.dataset.ll.split(',').map(Number); map.setView([la, lo], Math.max(map.getZoom(), 9)); openReading(L.latLng(la, lo), 'Tomorrow'); }; });
+}
+function drawTomorrow(ctx) {
+  const T = TOM; if (!T || S.anaView !== 'tom') return;
+  ctx.save();
+  for (const [col, lw, dash] of [['rgba(0,0,0,.85)', 4.6, []], ['#c39bff', 2.4, [6, 4]]]) {
+    ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.setLineDash(dash); ctx.beginPath();
+    for (const s of T.segs) { const p0 = project(s.a[0], s.a[1]), p1 = project(s.b[0], s.b[1]); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.font = '800 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const s of T.spots) {
+    if (!s.to) continue;
+    const [x0, y0] = project(s.lat, s.lon), [x1, y1] = project(s.to.lat, s.to.lon);
+    ctx.strokeStyle = '#c39bff'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x1, y1, 11, 0, 7); ctx.fillStyle = '#c39bff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.fillText(`${s.n}'`, x1, y1 + 0.5);
+  }
+  ctx.restore();
 }
 
 // Fast stand-in for fillNaN when the filled cells are never drawn: put the mean in the holes.
@@ -2264,12 +2383,26 @@ function fillSpecies() {
   spSel.appendChild(og);
   const keep = store.get(`species_${ocean}`, ocean === 'pac' ? 'dorado' : S.species);
   S.species = SPECIES[keep] && speciesFor(ocean).some(([k]) => k === keep) ? keep : speciesFor(ocean)[0][0];
-  spSel.value = S.species;
+  spSel.value = S.species; syncAnaSpecies();
   return true;
 }
+function syncAnaSpecies() { const a = document.getElementById('anaSpecies'); if (!a) return; a.innerHTML = spSel.innerHTML; a.value = spSel.value; }
 fillSpecies();
 map.on('moveend', () => { if (fillSpecies() && (S.prod === 'fish' || S.prod === 'ana')) { buildFish(); if (S.prod === 'ana') { buildAnalysis(); renderAnalysis(); } autoRange(true); renderRaster(); drawLegend(); chart.draw(); } });
-spSel.onchange = () => { S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); buildFish(); autoRange(true); renderRaster(); drawLegend(); chart.draw(); };
+spSel.onchange = () => {
+  S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); syncAnaSpecies();
+  buildFish(); if (S.prod === 'ana') { buildAnalysis(); renderAnalysis(); } autoRange(true); renderRaster(); drawLegend(); chart.draw();
+};
+syncAnaSpecies();
+$('anaSpecies').onchange = () => { spSel.value = $('anaSpecies').value; spSel.onchange(); };
+document.querySelectorAll('#anaSeg button').forEach((b) => {
+  b.onclick = () => {
+    S.anaView = b.dataset.v;
+    document.querySelectorAll('#anaSeg button').forEach((x) => x.classList.toggle('on', x === b));
+    $('anaBody').hidden = S.anaView !== 'now'; $('anaTom').hidden = S.anaView !== 'tom';
+    chart.draw();
+  };
+});
 $('maxRun').value = S.maxRun; $('maxRunVal').textContent = `${S.maxRun} nm`;
 $('maxRun').oninput = () => { S.maxRun = +$('maxRun').value; $('maxRunVal').textContent = `${S.maxRun} nm`; store.set('maxRun', S.maxRun); };
 $('maxRun').onchange = () => { buildFish(); chart.draw(); };
@@ -2342,7 +2475,7 @@ function setAnaCollapsed(c) {
 }
 $('anaClose').onclick = () => setAnaCollapsed(true);
 $('anaCopy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('anaBody').innerText); $('anaCopy').textContent = 'Copied'; setTimeout(() => { $('anaCopy').textContent = 'Copy write-up'; }, 1500); }
+  try { await navigator.clipboard.writeText($(S.anaView === 'tom' ? 'anaTom' : 'anaBody').innerText); $('anaCopy').textContent = 'Copied'; setTimeout(() => { $('anaCopy').textContent = 'Copy write-up'; }, 1500); }
   catch (e) { status('The browser blocked copying.', true); }
 };
 document.querySelectorAll('.prod').forEach((b) => {
