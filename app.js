@@ -614,7 +614,7 @@ function drawChart(ctx, size) {
     for (const [name, la, lo] of PORTS) {
       const [x, y] = project(la, lo);
       if (x < -50 || y < -20 || x > size.x + 50 || y > size.y + 20) continue;
-      const home = name === S.home, label = name.replace(' Inlet', '');
+      const home = name === S.home, label = name;
       ctx.beginPath(); ctx.arc(x, y, home ? 5 : 3.5, 0, 7); ctx.fillStyle = home ? '#35c2ff' : '#fff'; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = '#000'; ctx.stroke();
       if (z >= 7.5 || home) {
@@ -1476,7 +1476,7 @@ function renderSpots() {
   const home = PORTS.find((x) => x[0] === S.home);
   el.innerHTML = (S.fishSpots || []).map((s, i) => {
     const [d, b] = home ? rangeBearing([home[1], home[2]], [s.lat, s.lon]) : [0, 0];
-    return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home.replace(' Inlet', '')}</small></li>`;
+    return `<li data-i="${i}"><b>${i + 1}. ${s.score}/100</b><small>${s.why.join(' · ')}<br>${fmtLL(s.lat, s.lon)}${inLoran(s.lat, s.lon) ? ` · TD ${fmtTd(s.lat, s.lon)}` : ''}<br>${d.toFixed(0)} nm @ ${Math.round(b)}°T from ${S.home}</small></li>`;
   }).join('') || '<li><small>Nothing scores well in range. Try another species or a longer run.</small></li>';
   const fi = S.fishInfo;
   $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
@@ -1822,7 +1822,7 @@ async function omJson(url) {
   throw last;
 }
 async function loadWx() {
-  const b = map.getBounds().pad(0.15), cols = 13, rows = clamp(Math.round(cols * (b.getNorth() - b.getSouth()) / (b.getEast() - b.getWest())), 4, 13);
+  const b = map.getBounds().pad(0.15), cols = clamp(Math.round(map.getSize().x / 75), 5, 13), rows = clamp(Math.round(cols * (b.getNorth() - b.getSouth()) / (b.getEast() - b.getWest())), 4, 13);
   const lats = [], lons = [];
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
     lats.push((b.getSouth() + j * (b.getNorth() - b.getSouth()) / (rows - 1)).toFixed(3));
@@ -1861,7 +1861,10 @@ function buildWx() {
 function drawWx(ctx) {
   const g = S.data.wx; if (!g) return;
   ctx.save(); ctx.font = '700 10.5px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
+  // keep arrows ~70 px apart on screen whatever the zoom: zoomed out, skip points instead of piling them up
+  const p0 = project(g.lat0, g.lon0), px = project(g.lat0, g.lon0 + g.dlon), py = project(g.lat0 + g.dlat, g.lon0);
+  const si = Math.max(1, Math.ceil(70 / Math.max(1, Math.abs(px[0] - p0[0])))), sj = Math.max(1, Math.ceil(60 / Math.max(1, Math.abs(py[1] - p0[1]))));
+  for (let j = 0; j < g.ny; j += sj) for (let i = 0; i < g.nx; i += si) {
     const k = j * g.nx + i, val = g.v[k]; if (val !== val) continue;
     const [x, y] = project(g.lat0 + j * g.dlat, g.lon0 + i * g.dlon), to = (g.dir[k] + 180) * Math.PI / 180;   // "from" -> "toward"
     const L0 = 22, dx = Math.sin(to) * L0 / 2, dy = -Math.cos(to) * L0 / 2;
@@ -2322,7 +2325,7 @@ function showFishTimes() {
   const hp3 = PORTS.find((x) => x[0] === S.home), el = $('fishTimes'); if (!el) return;
   if (!hp3) { el.innerHTML = ''; return; }
   if (fishTimesFor === S.home && el.innerHTML) return;
-  fishTimesFor = S.home; $('fishTimesHdr').textContent = `Best times · ${S.home.replace(' Inlet', '')}`;
+  fishTimesFor = S.home; $('fishTimesHdr').textContent = `Best times · ${S.home}`;
   mountBestTimes(el, hp3[1], hp3[2]);
 }
 function setFishCollapsed(c) {
@@ -2420,10 +2423,25 @@ const homeChanged = () => {
   chart.draw();
 };
 const ht = $('homeTop');
-PORTS.forEach(([n]) => { const o = document.createElement('option'); o.value = n; o.textContent = `Home: ${n.replace(' Inlet', '')}`; ht.appendChild(o); });
+PORTS.forEach(([n]) => { const o = document.createElement('option'); o.value = n; o.textContent = `Home: ${n}`; ht.appendChild(o); });
 ht.value = S.home;
-hp.onchange = () => { S.home = hp.value; ht.value = S.home; store.set('home', S.home); homeChanged(); };
-ht.onchange = () => { S.home = ht.value; hp.value = S.home; store.set('home', S.home); fillSpecies(); homeChanged(); };
+// Each Jump-to zone remembers the home port you last picked inside it
+const zoneHome = store.get('zoneHome', {});
+function rememberHome() {
+  const p = PORTS.find((x) => x[0] === S.home); if (!p) return;
+  const inZone = (k) => { const [[s, w], [n, e]] = ZONES[k].view; return p[1] >= s - 1 && p[1] <= n + 1 && p[2] >= w - 1 && p[2] <= e + 1; };
+  // the zone you last jumped to, if this port is in it; otherwise the zone whose middle is closest to the port
+  let k = store.get('lastZone', null);
+  if (!k || !ZONES[k] || !inZone(k)) {
+    k = Object.keys(ZONES).sort((a, b) => {
+      const d = (z) => { const [[s, w], [n, e]] = ZONES[z].view; return Math.hypot((s + n) / 2 - p[1], (w + e) / 2 - p[2]); };
+      return d(a) - d(b);
+    })[0];
+  }
+  zoneHome[k] = S.home; store.set('zoneHome', zoneHome);
+}
+hp.onchange = () => { S.home = hp.value; ht.value = S.home; store.set('home', S.home); rememberHome(); homeChanged(); };
+ht.onchange = () => { S.home = ht.value; hp.value = S.home; store.set('home', S.home); rememberHome(); fillSpecies(); homeChanged(); };
 
 // Zone switcher: jump the view and set that zone's home port (for range/bearing and the hot-spot run limit)
 const zs = $('zone');
@@ -2436,7 +2454,8 @@ for (const [label, keys] of ZONE_GROUPS) {
 }
 zs.onchange = () => {
   const z = ZONES[zs.value]; if (!z) return;
-  S.home = z.home; store.set('home', S.home); hp.value = S.home; ht.value = S.home; fillSpecies();
+  S.home = zoneHome[zs.value] && PORTS.some((x) => x[0] === zoneHome[zs.value]) ? zoneHome[zs.value] : z.home; store.set('home', S.home); hp.value = S.home; ht.value = S.home; fillSpecies();
+  store.set('lastZone', zs.value); homeChanged();
   map.fitBounds(z.view); zs.value = '';
 };
 
@@ -2480,7 +2499,7 @@ function readings(lat, lon) {
   if (inLoran(lat, lon)) r.push([`Loran ${S.tdPair[0]}/${S.tdPair[1]}`, fmtTd(lat, lon)]);
   const home = PORTS.find((x) => x[0] === S.home);
   if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
-  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0].replace(' Inlet', '')}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
+  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0]}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
   return r;
 }
 

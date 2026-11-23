@@ -254,8 +254,25 @@ button.ghost { background: transparent !important; }
   #legend { width: auto; }
   #readout { white-space: normal; }
   .panel { left: 10px; right: 10px; width: auto !important; top: auto !important; bottom: 70px; }
-  #datebar { left: 50%; }
-  #dLabel { min-width: 110px; }
+  #datebar { left: 50%; max-width: calc(100vw - 70px); }
+  #dLabel { min-width: 0; font-size: 12px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; }
+  #dPick { padding: 0 6px; font-size: 11.5px; }
+  #rail button { min-width: 46px; padding: 5px 1px; font-size: 9px; gap: 2px; }
+  #rail button .ico { width: 32px; height: 20px; font-size: 10px; }
+  #rail button span:last-child { max-width: 52px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the two you use most on the water come first and are always on screen */
+  .prod[data-prod=fish] { order: -2; }
+  .prod[data-prod=ana] { order: -1; }
+  #wxMode { top: 130px; left: 10px; transform: none; }
+  /* Where to fish / Analysis: a short sheet above the bottom bar, not a full page */
+  .panel.side, #anaPanel { left: 6px !important; right: 6px !important; width: auto !important; top: auto !important;
+    bottom: 62px; max-height: 38vh; padding: 8px 10px; font-size: 12px; }
+  .panel.side h3 { margin: 0 0 4px; font-size: 13px; }
+  .panel.side .hint.long, #fishBasis { display: none; }
+  .panel.side .row2 { margin: 3px 0; }
+  #spotList li { padding: 4px 0; }
+  #spotList small { font-size: 11px; }
+  #anaBody p, #anaBody li { font-size: 12px; }
 }
 
 /* Ocean analysis write-up */

@@ -30,8 +30,8 @@
     <button class="prod" data-prod="ftle"><span class="ico">FSLE</span><span>Fronts</span></button>
     <button class="prod" data-prod="wx"><span class="ico">&#9729;</span><span>Weather</span></button>
     <button class="prod" data-prod="bottom"><span class="ico">&#9650;</span><span>Bottom</span></button>
-    <button class="prod" data-prod="ana"><span class="ico">AN</span><span>Analysis</span></button>
     <button class="prod hot" data-prod="fish"><span class="ico">&#9733;</span><span>Where to fish</span></button>
+    <button class="prod" data-prod="ana"><span class="ico">AN</span><span>Analysis</span></button>
   </div>
   <div class="sep"></div>
   <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
@@ -50,7 +50,7 @@
   <input id="datePick" type="date" aria-label="Pick a date" tabindex="-1">
   <button id="dNext" aria-label="Forward">&#9654;</button>
   <button id="dLatest" class="ghost">Latest</button>
-  <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">All charts &#9662;</button>
+  <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">Charts &#9662;</button>
 </div>
 
 <div id="wxMode" hidden><button data-m="wind">Wind</button><button data-m="waves">Waves</button></div>
@@ -115,7 +115,7 @@
   <div class="row2"><select id="species"></select></div>
   <div class="row2"><span class="lbl">Max run</span><input id="maxRun" type="range" min="20" max="200" step="5"><span id="maxRunVal" class="val"></span></div>
   <div class="row2"><span class="lbl">Depth</span><input id="depMin" type="number" min="0" step="10" placeholder="min fm"><span class="lbl">to</span><input id="depMax" type="number" min="0" step="50" placeholder="any"><span class="lbl">fm</span></div>
-  <p class="hint">Scores every spot on water temp for the species, then temp breaks, color edges, steep bottom and eddy edges, and marks it down in strong current. A starting point, not a promise.</p>
+  <p class="hint long">Scores every spot on water temp for the species, then temp breaks, color edges, steep bottom and eddy edges, and marks it down in strong current. A starting point, not a promise.</p>
   <p id="fishBasis" class="hint"></p>
   <ol id="spotList"></ol>
   <h3 id="fishTimesHdr">Best times</h3>
