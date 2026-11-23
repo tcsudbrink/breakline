@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "cleanUrls": false,
+  "rewrites": [
+    { "source": "/erddap/pfeg/:path*",   "destination": "https://coastwatch.pfeg.noaa.gov/erddap/:path*" },
+    { "source": "/erddap/cw/:path*",     "destination": "https://coastwatch.noaa.gov/erddap/:path*" },
+    { "source": "/erddap/upwell/:path*", "destination": "https://upwell.pfeg.noaa.gov/erddap/:path*" },
+    { "source": "/erddap/aoml/:path*",   "destination": "https://cwcgom.aoml.noaa.gov/erddap/:path*" },
+    { "source": "/erddap/ndbc/:path*",   "destination": "https://www.ndbc.noaa.gov/:path*" }
+  ],
+  "headers": [
+    { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+  ]
+}
