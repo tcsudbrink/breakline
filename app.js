@@ -472,6 +472,9 @@ const tOf = (p, v, [lo, hi]) => (p.log ? (Math.log10(v) - Math.log10(lo)) / (Mat
 const vOf = (p, t, [lo, hi]) => (p.log ? 10 ** (Math.log10(lo) + t * (Math.log10(hi) - Math.log10(lo))) : lo + t * (hi - lo));
 
 // ---------- Map ----------
+// Popups stay clear of the buttons on the right edge and the date bar / Jump to at the top
+const POP_OPTS = (w = 330) => ({ maxWidth: Math.min(w, window.innerWidth - 110), keepInView: true,
+  autoPanPaddingTopLeft: L.point(16, window.innerWidth <= 640 ? 140 : 100), autoPanPaddingBottomRight: L.point(70, 24) });
 const map = L.map('map', {
   zoomControl: true, attributionControl: true, minZoom: 4, maxZoom: 13, zoomSnap: 0.5, wheelPxPerZoomLevel: 90,
   maxBounds: [[WORLD.s, WORLD.w], [WORLD.n, WORLD.e]], maxBoundsViscosity: 0.8, preferCanvas: true,
@@ -880,7 +883,7 @@ function drawBuoys() {
   buoyLayer = L.layerGroup(list.map((b) => {
     const label = b.wtmp != null ? `${Math.round(C2F(b.wtmp))}°` : b.wvht != null ? `${(b.wvht * 3.28084).toFixed(0)}'` : '';
     return L.marker([b.lat, b.lon], { icon: L.divIcon({ className: '', html: `<div class="buoy"><i></i>${label ? `<span>${label}</span>` : ''}</div>`, iconSize: [10, 10], iconAnchor: [5, 5] }) })
-      .bindPopup(() => buoyHtml(b), { maxWidth: 300 });
+      .bindPopup(() => buoyHtml(b), POP_OPTS(300));
   })).addTo(map);
 }
 loadBuoys(); setInterval(loadBuoys, 10 * 60 * 1000);
@@ -2592,7 +2595,7 @@ function openReading(latlng, title) {
   el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
     <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
     <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
-  const pop = L.popup({ maxWidth: 330 }).setLatLng(latlng).setContent(el);
+  const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
   const wb = el.querySelector('.ppwx');
   wb.onclick = async () => {
     wb.disabled = true; wb.textContent = 'Loading forecast…';
