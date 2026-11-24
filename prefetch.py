@@ -58,7 +58,7 @@ SOURCES = {
     "goes": ("sst", "aoml", "goes19SSThourly", "sst", 0.02, True, False, None),
 }
 DAYS = {"sst": 4, "chl": 7}
-GOES_HOURS = 24
+GOES_HOURS = 72                                       # 3 days of hourly scans: feeds the 3-day composite
 # 8-bit encodings (0 = no data): SST in deg C, chlorophyll as log10(mg/m3). Mirrored in app.js (PRE_ENC).
 ENC = {"sst": (-2.0, 34.0, False), "chl": (0.01, 50.0, True)}
 

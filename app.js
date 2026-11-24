@@ -73,6 +73,8 @@ const SRC = {
     amday: { label: 'Morning passes', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtAMDay', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
     pmnight: { label: 'Night passes (PM)', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtPMNight', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
     amnight: { label: 'Night passes (AM)', who: 'NOAA ACSPO, 2 km, clouds', host: 'cw', id: 'noaacwLEOACSPOSSTL3SnrtAMNight', v: 'sea_surface_temperature', res: 0.02, asc: false, t: '12:00:00Z' },
+    comp1: { label: '1-day composite', who: 'GOES-19 hourly + polar passes, last 24 h', comp: 1, v: 'sst', res: 0.02, cells: 300 },
+    comp3: { label: '3-day composite', who: 'GOES-19 hourly + polar passes, last 72 h', comp: 3, v: 'sst', res: 0.02, cells: 300 },
   },
   chl: {
     cm_l4: { label: 'Gap-free (Copernicus)', who: 'EU Copernicus multi-sensor, 4 km, cloud-filled', cm: 'chl_l4', res: 0.0417, gap: true },
@@ -82,6 +84,8 @@ const SRC = {
     s3b: { label: 'Sentinel-3B pass', who: 'Copernicus OLCI, 4 km, clouds', host: 'cw', id: 'noaacwS3BOLCIchlaDaily', v: 'chlor_a', alt: true, res: 0.0375, asc: false, t: '12:00:00Z' },
     n21: { label: 'NOAA-21 pass', who: 'NOAA VIIRS, 750 m, clouds', host: 'cw', id: 'noaacwN21VIIRSchlaSectorUSDaily', v: 'chlor_a', alt: true, res: 0.0075, asc: false, t: '18:00:00Z' },
     n20: { label: 'NOAA-20 pass', who: 'NOAA VIIRS, 4 km, clouds', host: 'cw', id: 'noaacwN20VIIRSchlaDaily', v: 'chlor_a', alt: true, res: 0.0375, asc: false, t: '12:00:00Z' },
+    comp1: { label: '1-day composite', who: 'VIIRS + OLCI passes, newest day', comp: 1, v: 'chlor_a', res: 0.02 },
+    comp3: { label: '3-day composite', who: 'VIIRS + OLCI passes, last 3 days', comp: 3, v: 'chlor_a', res: 0.02 },
   },
 };
 const srcUrl = (s, w, t) => `/erddap/${s.host}/griddap/${s.id}.asc?${q(`${s.v}[(${t || 'last'})]${s.alt ? '[(0.0)]' : ''}[${latRange(w, s.asc)}][${lonRange(w)}]`)}`;
@@ -90,7 +94,7 @@ const curSrc = (fam) => SRC[fam][S.src[fam]] || Object.values(SRC[fam])[0];
 // Every product: where its data lives, native resolution, how many cells to aim for across the window
 const PRODUCTS = {
   sst: {
-    get name() { return `Water temp · ${curSrc('sst').label}`; }, unit: '°F', step: 0.5, cells: 520, sst: true, family: 'sst',
+    get name() { return `Water temp · ${curSrc('sst').label}`; }, unit: '°F', step: 0.5, get cells() { return curSrc('sst').cells || 520; }, sst: true, family: 'sst',
     get res() { return curSrc('sst').res; },
     url: (w, t) => srcUrl(curSrc('sst'), w, t),
     get v() { return curSrc('sst').v; }, conv: SST_C, fmt: (v) => v.toFixed(1) + '°F', day: (d) => `${d}T${curSrc('sst').t}`,
@@ -1156,6 +1160,7 @@ function drawLegend() {
   const p = PRODUCTS[S.prod], g = PG(), rng = S.range[S.prod];
   let when = '';
   if ((p.hourly || S.prod === 'fish' || S.prod === 'ana') && g?.times?.length) when = `${S.prod === 'fish' || S.prod === 'ana' ? 'Now · temps ' : ''}${niceHour(g.times[g.times.length - 1])}`;
+  else if (g?.comp && p.family) when = `${g.comp === 1 ? '24 h' : '3 days'} to ${niceHour(g.times[0])} · ${g.looks} looks`;
   else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
   if (S.fc > 0) when = `${niceHour(fcTime(S.fc))} (+${S.fc} h forecast)`;
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
@@ -1313,6 +1318,7 @@ async function loadGrid(prod) {
   let text;
   // zoomed out over a prefetched zone: the hourly snapshot on our own CDN (about a second)
   try { const pg = await preForView(prod); if (pg) return pg; } catch (e) { console.warn('prefetch', e); }
+  if (p.family && curSrc(p.family).comp) { const g = await loadComposite(p.family, curSrc(p.family).comp, win, null); g.src = S.src[p.family]; return g; }
   // Copernicus first where it's the better/more reliable source; NOAA if it fails
   const cmKey = p.family ? curSrc(p.family).cm : p.cm;
   if (cmKey) {
@@ -1362,6 +1368,81 @@ async function overlayNrt(g, p, win) {
     }
   }
   if (painted) { g.baseDate = g.date; g.date = n.date; }
+}
+
+// ---------- Composites: every clear look in the last 1 or 3 days, stacked per pixel ----------
+// Water temp: GOES-19 hourly scans + the four NOAA polar passes. Keeps the warm end of each pixel's readings
+// (clouds and cloud edges read cold): the 2nd-warmest when there are 3+ looks, else the warmest. Same idea as the
+// classic "warmest pixel" composites, minus the single hottest reading so one calm afternoon can't paint a fake warm spot.
+// Chlorophyll: VIIRS NOAA-20/21 + OLCI Sentinel-3A/3B passes, geometric mean of the clear readings.
+const COMP_PARTS = { sst: ['pmday', 'amday', 'pmnight', 'amnight'], chl: ['n21', 'n20', 's3a', 's3b'] };
+function stackComposite(fam, base, layers) {
+  const n = base.nx * base.ny, cnt = new Uint16Array(n), sst = fam === 'sst';
+  const a = new Float32Array(n).fill(-Infinity), b = new Float32Array(n).fill(-Infinity), sum = new Float32Array(n);
+  const add = (k, x) => { cnt[k]++; if (!sst) sum[k] += Math.log10(Math.max(x, 0.001)); else if (x > a[k]) { b[k] = a[k]; a[k] = x; } else if (x > b[k]) b[k] = x; };
+  let looks = 0;
+  for (const g of layers) {
+    const same = g.nx === base.nx && g.ny === base.ny && Math.abs(g.lat0 - base.lat0) < 1e-6 && Math.abs(g.dlat - base.dlat) < 1e-9 && Math.abs(g.lon0 - base.lon0) < 1e-6 && Math.abs(g.dlon - base.dlon) < 1e-9;
+    for (const sl of g.slices || [g.v]) {
+      let hit = 0;
+      if (same) { for (let k = 0; k < n; k++) { const x = sl[k]; if (x === x) { add(k, x); hit++; } } }
+      else {
+        for (let j = 0; j < base.ny; j++) {
+          const la = base.lat0 + j * base.dlat;
+          for (let i = 0; i < base.nx; i++) { const x = sample(g, la, base.lon0 + i * base.dlon, sl); if (x === x) { add(j * base.nx + i, x); hit++; } }
+        }
+      }
+      if (hit) looks++;
+    }
+  }
+  const v = new Float32Array(n); let cov = 0;
+  for (let k = 0; k < n; k++) {
+    if (!cnt[k]) { v[k] = NaN; continue; }
+    cov++; v[k] = sst ? (cnt[k] >= 3 ? b[k] : a[k]) : 10 ** (sum[k] / cnt[k]);
+  }
+  return { v, looks, coverPct: Math.round(100 * cov / n) };
+}
+// zone = a prefetched zone (zoomed out: stack the hourly snapshots on our CDN); otherwise fetch the window from NOAA
+async function loadComposite(fam, days, win, zone) {
+  const conv = fam === 'sst' ? SST_C : CHL, end = S.date ? `${S.date}T23:00:00Z` : null;
+  let layers = [], base = null, polarN = 0;
+  if (zone) {
+    await preReady; if (!PRE) return null;
+    const keys = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/`) && !PRE.items[k].none);
+    let pick = [];
+    if (fam === 'sst') {
+      const hrs = keys.filter((k) => k.split('/')[1] === 'goes').sort(), last = hrs[hrs.length - 1];
+      if (last) { const from = hourAdd(last.split('/')[2], -(24 * days - 1)); pick = hrs.filter((k) => k.split('/')[2] >= from); }
+    }
+    const passes = keys.filter((k) => { const [, f, src] = k.split('/'); return f === fam && COMP_PARTS[fam].includes(src); });
+    const lastDay = passes.map((k) => k.split('/')[3]).sort().pop();
+    if (lastDay) pick.push(...passes.filter((k) => k.split('/')[3] > addDays(lastDay, -days)));
+    if (!pick.length) return null;
+    layers = await Promise.all(pick.map((k) => preGrid(PRE.items[k], conv))); polarN = pick.filter((k) => !k.includes('/goes/')).length;
+    base = layers[0];
+  } else {
+    const jobs = [], res = SRC[fam][`comp${days}`].res;
+    const sw = (r) => ({ ...win, stride: Math.max(1, Math.round(win.stride * res / r)) });
+    if (fam === 'sst') for (let k = 0; k < 4 * days; k++) jobs.push(getText(PRODUCTS.goes.url(sw(0.02), end, k)).then((t) => toGrid(parseAsc(t), 'sst', SST_C, true)));
+    const tq = end ? `(${addDays(S.date, 1 - days)}T00:00:00Z):1:(${end})` : days > 1 ? `last-${days - 1}:1:last` : 'last';
+    // polar passes live on coastwatch.noaa.gov, which is often slow or down: give them 15 s, then stack what we have
+    const cap = (pr) => Promise.race([pr, new Promise((_, no) => setTimeout(() => no(new Error('polar passes timed out')), 15000))]);
+    for (const key of COMP_PARTS[fam]) {
+      const s = SRC[fam][key], w = sw(s.res);
+      jobs.push(cap(getText(`/erddap/${s.host}/griddap/${s.id}.asc?${q(`${s.v}[${tq}]${s.alt ? '[(0.0)]' : ''}[${latRange(w, s.asc)}][${lonRange(w)}]`)}`).then((t) => toGrid(parseAsc(t), s.v, conv, true))).then((g) => { g.polar = true; return g; }));
+    }
+    const got = await Promise.allSettled(jobs);
+    layers = got.filter((x) => x.status === 'fulfilled').map((x) => x.value); polarN = layers.filter((g) => g.polar).length;
+    if (!layers.length) throw got[0].reason;
+    const d = res * win.stride;
+    base = { nx: Math.floor((win.e - win.w) / d) + 1, ny: Math.floor((win.n - win.s) / d) + 1, lat0: win.s, dlat: d, lon0: win.w, dlon: d };
+  }
+  const times = layers.flatMap((g) => g.times || []).sort(), t1 = times[times.length - 1];
+  const r = stackComposite(fam, base, layers);
+  return {
+    nx: base.nx, ny: base.ny, lat0: base.lat0, dlat: base.dlat, lon0: base.lon0, dlon: base.dlon, v: r.v, times: [t1], date: t1.slice(0, 10),
+    comp: days, looks: r.looks, coverPct: r.coverPct, win, noPolar: !polarN,
+  };
 }
 
 // Depth: zoomed out, cut it from the 2-arc-minute grid shipped with the app (instant, offline);
@@ -2429,6 +2510,7 @@ async function refresh() {
     if (fail) status(`Some data didn't load (${fail.reason.message}).`, true);
     else if (S.fc > 0 && p.sst) status(`Today's temps moved ${S.fc} h by the forecast currents: breaks and eddy edges shift; the water itself doesn't warm or cool here.`);
     else if (S.fc > 0) status('Ocean-model current forecast (Copernicus, 9 km). HF radar and satellite only show now.');
+    else if (gg?.comp && p.family) status(`${gg.comp === 1 ? '1-day' : '3-day'} composite: ${gg.looks} satellite looks stacked, ${gg.coverPct}% of the area covered${gg.noPolar && p.family === 'sst' ? " (GOES only: NOAA's polar-pass server didn't answer)" : ''}. ${p.family === 'sst' ? 'Each spot shows the warm end of its clear readings (clouds read cold).' : 'Each spot is the average of its clear readings.'}`);
     else if (p.hourly && gg && gg.anyPct < 3) status('Clouds: GOES has had almost no clear view here in the last 24 hours. Use daily Temp.', true);
     else if (p.hourly && gg) status(`${gg.clearPct}% clear this hour · rest filled from the last 24 h`);
     else if (S.prod === 'mld' && gg && !gg.via && viewValues(gg).length < 0.3 * gg.nx * gg.ny * 0.5) status('NOAA only computes mixed layer depth in warm (Gulf Stream) water; blank elsewhere.', true);
@@ -2493,12 +2575,13 @@ function pickerItems(fam) {
   const days = fam === 'sst' ? 4 : 7;
   for (const [key, s] of Object.entries(SRC[fam])) {
     for (let d = 1; d <= days; d++) {
+      if (s.comp) { if (d === 1) items.push({ fam, key, day: null, t: null, latest: true, label: s.label, who: s.who, when: s.comp === 1 ? 'Last 24 h' : 'Last 3 days', s }); continue; }
       if (key === 'dineof' && d > 1) break;      // gap-filled: just the latest blend
       const day = addDays(today, -d);
       items.push({ fam, key, day: key === 'dineof' ? null : day, t: key === 'dineof' ? null : `${day}T${s.t}`, label: s.label, who: s.who, when: key === 'dineof' ? 'Latest' : nice(day), s });
     }
   }
-  return items;
+  return items.sort((a, b) => !!b.s.comp - !!a.s.comp);   // composites lead the grid
 }
 function openPicker(fam = PK.fam) {
   PK.fam = fam; const my = ++PK.token;
@@ -2563,7 +2646,7 @@ async function preGrid(entry, conv) {
   const lo = log ? Math.log10(lo0) : lo0, hi = log ? Math.log10(hi0) : hi0, nx = entry.nx, ny = entry.ny, v = new Float32Array(nx * ny);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {         // PNG is north-up; grid rows run south->north
     const q8 = px[((ny - 1 - j) * nx + i) * 4];
-    if (!q8) { v[j * nx + i] = NaN; continue; }
+    if (q8 <= 1) { v[j * nx + i] = NaN; continue; }   // 0 = no data; 1 = pinned at the floor (the polar passes' cloud/land fill lands here)
     const x = lo + (q8 - 1) / 254 * (hi - lo); v[j * nx + i] = conv(log ? 10 ** x : x);
   }
   const g = { nx, ny, v, lat0: entry.lat0 + (ny - 1) * entry.dlat, dlat: -entry.dlat, lon0: entry.lon0, dlon: entry.dlon, times: [entry.time], date: entry.time.slice(0, 10), pre: true };
@@ -2589,7 +2672,9 @@ async function preForView(prod) {
     return { ...last, v, times: pick.map((k) => k.split('/')[2]), clearPct: Math.round(100 * fresh / v.length), anyPct: Math.round(100 * any / v.length), win: { ...PRE_BOX[zone], pre: true, stride: 1 } };
   }
   if (!p.family) return null;
-  const key = S.src[p.family], s = curSrc(p.family); if (s.cm) return null;
+  const key = S.src[p.family], s = curSrc(p.family);
+  if (s.comp) { if (S.date) return null; const g = await loadComposite(p.family, s.comp, null, zone); return g && { ...g, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, src: key }; }
+  if (s.cm) return null;
   const id = S.date ? `${zone}/${p.family}/${key}/${S.date}` : (key === 'dineof' ? `${zone}/chl/dineof/latest` : preLatest(zone, p.family, key));
   const e = id && preEntry(id); if (!e || e.none) return null;
   const g = await preGrid(e, p.family === 'chl' ? CHL : SST_C);
@@ -2597,7 +2682,7 @@ async function preForView(prod) {
 }
 
 async function loadThumb(it, vkey) {
-  const fam = PK.fam, view = PK.view, conv = fam === 'chl' ? CHL : SST_C, key = `${it.key}|${it.day || it.t}|${vkey}`;
+  const fam = PK.fam, view = PK.view, conv = fam === 'chl' ? CHL : SST_C, key = `${it.fam}|${it.key}|${it.day || it.t}|${vkey}`;
   try {
     await preReady;
     const zone = preZone(view), pid = zone && (it.fam === 'goes' ? `${zone}/goes/${it.t}` : `${zone}/${it.fam}/${it.key}/${it.key === 'dineof' ? 'latest' : it.day}`);
@@ -2605,6 +2690,10 @@ async function loadThumb(it, vkey) {
     if (THUMBS.has(key)) it.g = THUMBS.get(key);
     else if (pe && pe.none) { it.el.querySelector('em').textContent = pe.cloud ? 'all cloud' : 'no pass that day'; it.el.classList.add('none'); return; }
     else if (pe) it.g = await preGrid(pe, conv);
+    else if (it.s.comp) {
+      const span = Math.max(view.n - view.s, view.e - view.w);
+      it.g = (zone && !S.date && await loadComposite(fam, it.s.comp, null, zone)) || await loadComposite(fam, it.s.comp, { ...view, stride: Math.max(1, Math.ceil(span / it.s.res / 70)) }, null);
+    }
     else if (it.s.cm) { const g = await loadCmems(CM[it.s.cm], view, it.day, 64); it.g = { ...g, v: g.v.map((x) => (x === x ? conv(x) : x)) }; }
     else {
       const span = Math.max(view.n - view.s, view.e - view.w), stride = Math.max(1, Math.ceil(span / it.s.res / 70));
@@ -2655,7 +2744,7 @@ function drawThumbsAll(list) {
     }
     ctx.putImageData(img, 0, 0);
     const pct = water ? Math.round(100 * clear / water) : 0;
-    it.el.querySelector('em').textContent = it.key === 'dineof' ? `base ${nice(it.g.date)} + newer clear passes on load` : `${pct}% clear`;
+    it.el.querySelector('em').textContent = it.key === 'dineof' ? `base ${nice(it.g.date)} + newer clear passes on load` : it.g.comp ? `${it.g.looks} looks · ${pct}% covered` : `${pct}% clear`;
     it.el.classList.toggle('cloudy', pct < 25);
   }
   $('pkScale').textContent = `Same color scale on every thumbnail: ${fmtTick(p, rng[0])} to ${fmtTick(p, rng[1])} ${p.unit}`;
