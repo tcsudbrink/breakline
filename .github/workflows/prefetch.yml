@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 50
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy1.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,8 +38,19 @@ jobs:
           python prefetch.py site/live
           echo "<p>Breakline data. The app is at https://breakline-xi.vercel.app</p>" > site/index.html
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+      # GitHub sometimes can't see the just-uploaded artifact for a few seconds
+      # ("No artifacts named github-pages"), so wait and retry before failing the run.
+      - name: Let the artifact settle
+        run: sleep 15
+      - id: deploy1
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Wait before retry
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 45
       - id: deploy
-        uses: actions/deploy-pages@v4
+        if: steps.deploy1.outcome == 'failure'
+        uses: actions/deploy-pages@v5
