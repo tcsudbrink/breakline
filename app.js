@@ -3016,32 +3016,141 @@ map.on('moveend', () => {
   }, 450);
 });
 
+// ---------- What each reading means (the (i) notes in the tap box) ----------
+// spread = biggest difference between this point and four neighbors d degrees away (a quick break/edge check);
+// ratio = compare as a ratio (chlorophyll varies by multiples, not by amounts)
+function spread(g, lat, lon, d, ratio) {
+  const v = sample(g, lat, lon); if (!(v === v)) return NaN;
+  let m = ratio ? 1 : 0;
+  for (const [a, b] of [[d, 0], [-d, 0], [0, d], [0, -d]]) {
+    const x = sample(g, lat + a, lon + b);
+    if (x === x) m = Math.max(m, ratio ? Math.max(x / v, v / x) : Math.abs(x - v));
+  }
+  return m;
+}
+const P3 = (what, means, expect) => `<b>What it is:</b> ${what}<br><b>What this reading means:</b> ${means}${expect ? `<br><b>What to expect here:</b> ${expect}` : ''}`;
+const INFO = {
+  temp(v, sp) {
+    const s = SPECIES[S.species], nm = s?.label.toLowerCase();
+    let fit = '';
+    if (s) {
+      const [lo, ok0, ok1, hi] = s.t;
+      fit = v < lo || v > hi ? `${v.toFixed(0)}°F is outside the range ${nm} will tolerate (${lo}-${hi}°F).` : v >= ok0 && v <= ok1 ? `${v.toFixed(0)}°F is right in the ${nm} sweet spot (${ok0}-${ok1}°F).` : `${v.toFixed(0)}°F is fishable for ${nm} but off their best range (${ok0}-${ok1}°F).`;
+    }
+    const brk = sp === sp && sp >= 1;
+    return P3('Surface water temperature from satellites (clouds leave gaps).',
+      fit + (brk ? ` The water changes ${sp.toFixed(1)}°F within about 2 miles: that is a temperature break, where bait gathers and predators patrol the edge.` : ' The water is about the same temperature for a couple of miles around: no sharp break right here.'),
+      brk ? 'Work along the break, especially the warm side, and watch for bait, birds and weed lines.' : 'Look for the nearest break on the chart (tightly packed colors) rather than fishing open water.');
+  },
+  hourly(v, daily) {
+    const d = daily === daily ? v - daily : NaN;
+    return P3('The latest hourly GOES-19 satellite scan: newer than the daily water temp, but coarser.',
+      d === d ? `It reads ${Math.abs(d).toFixed(1)}°F ${d >= 0 ? 'warmer' : 'cooler'} than the daily water temp here.${Math.abs(d) > 2 ? ' A gap that big usually means a cloud edge or afternoon surface heating, so trust the daily map for where the edges are.' : ' The two agree, so the edges on the map are current.'}` : 'Use it to see how the water has moved since the daily map.',
+      'Calm, sunny afternoons heat the top inch of water; the real edge is usually where the morning scans put it.');
+  },
+  chl(v, r) {
+    const band = v < 0.1 ? 'Very blue, clear offshore water (Gulf Stream or open ocean). Little food, but billfish and tuna travel it, and fish stack where it meets greener water.'
+      : v < 0.3 ? 'Blue-green "transition" water. Often the best color: enough food for bait, clear enough for pelagics to hunt.'
+      : v < 1 ? 'Green water: plenty of plankton and bait, but cloudier. Better for bottom fish and bait than for billfish.'
+      : 'Dirty coastal or river-plume water: heavy plankton or sediment. Inshore species like it; offshore species avoid it.';
+    const edge = r === r && r > 1.6;
+    return P3('Chlorophyll is plankton in the water, measured by its color from satellites. It stands in for food and water clarity.',
+      band + (edge ? ' The color changes sharply within about 2 miles: a color edge, one of the most reliable places to find fish offshore.' : ''),
+      edge ? 'Troll along the line where blue meets green, and look for weed lines and birds.' : 'Find the nearest spot where the color changes on the chart.');
+  },
+  ssh(v, sp) {
+    const kind = Math.abs(v) < 4 ? 'This water is close to normal height: no strong eddy right here.'
+      : v > 0 ? `The sea surface is ${v.toFixed(0)} cm higher than normal. Plus (+) means a high: usually a warm-core eddy or Gulf Stream water, turning clockwise. Water piles up and sinks in the middle (downwelling), so the center is warm, clear and low on food.`
+      : `The sea surface is ${Math.abs(v).toFixed(0)} cm lower than normal. Minus (-) means a low: usually a cold-core eddy, turning counterclockwise. Water rises from below in the middle (upwelling), bringing up cooler, nutrient-rich water that turns green.`;
+    const edge = sp === sp && sp >= 8;
+    return P3('Altimetry is the height of the sea surface measured by satellite radar, compared with normal. It shows eddies and currents even under clouds.',
+      kind + (edge ? ` The height changes ${sp.toFixed(0)} cm within about 15 miles: you are near an eddy edge, where current runs fastest and fish stack up.` : ''),
+      edge ? 'Fish the edge rather than the center. Expect current and a temp or color break nearby.' : v > 4 ? 'Head for the edge of the high, where it meets cooler water.' : v < -4 ? 'The edges of a cold eddy often hold bait. Expect cooler, greener water inside it.' : 'Look on the chart for the nearest red or blue blob and fish its edge.');
+  },
+  mld(v) {
+    return P3('How deep the warm, well-mixed surface layer goes before the water turns colder (the thermocline).',
+      v < 60 ? `At about ${Math.round(v)} ft the warm layer is shallow, so bait and fish are squeezed up near the surface.` : v < 150 ? `At about ${Math.round(v)} ft the warm layer is a medium depth.` : `At about ${Math.round(v)} ft the warm layer is deep, so fish can spread out and go deep.`,
+      v < 60 ? 'Good for surface trolling and topwater.' : 'Run some baits deeper (planers, downriggers or deep-diving plugs), especially in midday sun.');
+  },
+  ftle(v) {
+    return P3('Front strength is worked out from the currents. It shows where water from different directions gets pushed together into a line.',
+      v > 0.3 ? 'A strong convergence line: water is being pulled together here.' : v > 0.15 ? 'A moderate convergence line.' : 'No strong convergence right here.',
+      v > 0.15 ? 'Expect weed lines, debris, foam and bait collected along the line. Fish along it.' : 'Look for the bright lines on the Fronts chart nearby.');
+  },
+  sss(v) {
+    return P3('How salty the surface water is (PSU, about parts per thousand).',
+      v >= 36 ? 'Very salty: typical of Gulf Stream and open subtropical water.' : v >= 34.5 ? 'Normal ocean water.' : v >= 32 ? 'A little fresher than open ocean: shelf water mixed with runoff.' : 'Fresh-influenced water from a river, sound or inlet outflow.',
+      v < 34 ? 'Expect off-colored water and inshore species. A sharp salinity change often lines up with a color break.' : 'Clear water where pelagic species are comfortable.');
+  },
+  score(v) {
+    const s = SPECIES[S.species];
+    return P3(`Breakline's 0-100 rating of how fishy this spot looks for ${s ? s.label.toLowerCase() : 'the chosen species'}. It weighs temp breaks, color, bottom structure and eddies.`,
+      v >= 70 ? 'High score: several good signs line up here.' : v >= 40 ? 'Medium score: a couple of good signs, but not everything lines up.' : 'Low score: little here for this species right now.',
+      'It is worked out by computer from satellite data. Treat it as a short list of places to check, not a promise.');
+  },
+  depth(fm, sp) {
+    const ft = fm * 6;
+    const zone = ft < 30 ? 'Shallow water: inshore and nearshore fish.' : fm < 20 ? 'Nearshore: bottom fish, kings, cobia and bait schools.' : fm < 60 ? 'Mid-shelf: reefs, ledges, kings, and mahi on weed lines.' : fm < 120 ? 'Near the shelf break: tuna, wahoo, mahi, billfish.' : 'Deep blue water past the shelf: tuna, billfish and swordfish.';
+    const dropFm = sp === sp ? sp / FATHOM : 0, drop = dropFm >= 3;
+    return P3('Water depth from NOAA charts and depth surveys.',
+      zone + (drop ? ` The bottom changes about ${Math.round(dropFm)} fathoms within half a mile: a drop-off or ledge.` : ''),
+      drop ? 'Steep bottom pushes current and bait up, so fish the edge of it.' : 'Look on the depth lines for the nearest edge, hump or canyon.');
+  },
+  cur(kt) {
+    return P3('Surface current speed and the direction it is flowing toward.',
+      kt > 1.5 ? `${kt.toFixed(1)} kt is strong current, likely the Gulf Stream or an eddy edge.` : kt > 0.5 ? `${kt.toFixed(1)} kt is moderate current.` : `${kt.toFixed(1)} kt is light current.`,
+      kt > 1.5 ? 'Expect a hard drift and long tag lines. Bottom fishing is tough; trolling the edge is good. Wind against this current stacks up steep seas.' : 'Easy drifts and bottom fishing. Fish tend to hold on the down-current side of structure.');
+  },
+  wind(kt) {
+    return P3('The forecast model wind for right now at this spot: the direction it blows from, speed, and gusts.',
+      kt < 10 ? 'Light wind: comfortable for any boat.' : kt < 15 ? 'Moderate wind: fine for most boats, a little chop.' : kt < 20 ? 'Fresh wind: sporty for smaller boats, uncomfortable running into it.' : 'Strong wind: rough for most recreational boats.',
+      'Wind blowing against the current (like a north wind on the Gulf Stream) builds steep, dangerous seas fast.');
+  },
+  seas(ft, sec) {
+    const ok = sec >= ft * 2;
+    return P3('The forecast model wave height (feet) and period (seconds between waves).',
+      `${ft.toFixed(1)} ft at ${Math.round(sec)} seconds is ${ok ? 'a comfortable ride: the waves are spaced out' : 'choppy: the waves are close together'}. Rule of thumb: it is comfortable when the seconds are at least double the feet.`,
+      ft > 6 ? 'Rough for most boats; consider waiting.' : ft > 4 || (!ok && ft >= 2.5) ? 'Expect a wet, bumpy ride: slow down in smaller boats.' : 'Reasonable conditions.');
+  },
+  spot(kind) {
+    const k = { reef: 'An artificial or natural reef', pier: 'A fishing pier', jetty: 'A jetty or rock wall', rock: 'A rock pile or hard bottom', 'shoal/bar': 'A shoal or sandbar', inshore: 'A known inshore spot' }[kind] || 'A known fishing spot';
+    return P3(`${k} from public fishing-spot lists.`, 'Structure holds bait, and bait holds fish.', 'Expect other boats on popular spots. Fish the down-current side.');
+  },
+  wreck(kind) {
+    return P3(`A charted ${kind.toLowerCase()} from NOAA.`, 'Hard structure on the bottom attracts bait and bottom fish.', 'Bottom fish, amberjack and cobia often hold here. Keep trolling gear clear of it.');
+  },
+  loran: P3('Loran-C time differences (TDs), the old navigation numbers many fishing spots are still written in.', 'Use them to match spots from old logbooks and spot lists.', 'The conversion is good to within a few hundred feet; double check on your sounder.'),
+  run(nm) {
+    return P3('Distance and true bearing from there to this spot.', `${nm.toFixed(1)} nm is about ${(nm / 25).toFixed(1)} h at 25 kt, or ${(nm / 18).toFixed(1)} h at 18 kt.`, 'Plan fuel for the round trip plus a reserve.');
+  },
+};
+
 // Readout
 function readings(lat, lon) {
   const r = [], D = S.data;
-  const add = (k, g, f) => { const v = sample(g, lat, lon); if (v === v) r.push([k, f(v)]); };
-  add('Water temp', D.sst, PRODUCTS.sst.fmt);
-  add('Hourly temp', D.goes, PRODUCTS.goes.fmt);
-  add('Chlorophyll', D.chl, PRODUCTS.chl.fmt);
-  add('Altimetry', D.ssh, (v) => `${PRODUCTS.ssh.fmt(v)} <small>${v > 0 ? 'above' : 'below'} normal</small>`);
-  add('Mixed layer', D.mld, PRODUCTS.mld.fmt);
-  add('Front strength', D.ftle, PRODUCTS.ftle.fmt);
-  add('Salinity', D.sss, PRODUCTS.sss.fmt);
-  add('Hot-spot score', D.fish, PRODUCTS.fish.fmt);
-  const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
+  const add = (k, g, f, why) => { const v = sample(g, lat, lon); if (v === v) r.push([k, f(v), why && why(v, g)]); };
+  add('Water temp', D.sst, PRODUCTS.sst.fmt, (v, g) => INFO.temp(v, spread(g, lat, lon, 0.03)));
+  add('Hourly temp', D.goes, PRODUCTS.goes.fmt, (v) => INFO.hourly(v, sample(D.sst, lat, lon)));
+  add('Chlorophyll', D.chl, PRODUCTS.chl.fmt, (v, g) => INFO.chl(v, spread(g, lat, lon, 0.04, true)));
+  add('Altimetry', D.ssh, (v) => `${PRODUCTS.ssh.fmt(v)} <small>${Math.abs(v) < 4 ? 'near normal' : v > 0 ? 'high · downwelling' : 'low · upwelling'}</small>`, (v, g) => INFO.ssh(v, spread(g, lat, lon, 0.25)));
+  add('Mixed layer', D.mld, PRODUCTS.mld.fmt, (v) => INFO.mld(v));
+  add('Front strength', D.ftle, PRODUCTS.ftle.fmt, (v) => INFO.ftle(v));
+  add('Salinity', D.sss, PRODUCTS.sss.fmt, (v) => INFO.sss(v));
+  add('Hot-spot score', D.fish, PRODUCTS.fish.fmt, (v) => INFO.score(v));
+  const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z), z < 0 ? INFO.depth(-z / FATHOM, spread(D.bathy, lat, lon, 0.008)) : null]);
   const c = curAt(lat, lon);
-  if (c) r.push(['Current', `${(Math.hypot(c[0], c[1]) * 1.94384).toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`]);
+  if (c) { const kt = Math.hypot(c[0], c[1]) * 1.94384; r.push(['Current', `${kt.toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`, INFO.cur(kt)]); }
   for (const [d, b, sp] of spotsNear(lat, lon)) {
-    r.push([sp[3] === 'reef' ? 'Reef' : INSHORE_KINDS.has(sp[3]) ? sp[3][0].toUpperCase() + sp[3].slice(1) : 'Spot', `${sp[2]}${sp[6] ? ` · ${sp[6]}` : ''} · ${d.toFixed(2)} nm @ ${Math.round(b)}°T <small>(${sp[4]})</small>`]);
+    r.push([sp[3] === 'reef' ? 'Reef' : INSHORE_KINDS.has(sp[3]) ? sp[3][0].toUpperCase() + sp[3].slice(1) : 'Spot', `${sp[2]}${sp[6] ? ` · ${sp[6]}` : ''} · ${d.toFixed(2)} nm @ ${Math.round(b)}°T <small>(${sp[4]})</small>`, INFO.spot(sp[3])]);
   }
   for (const [d, w] of wrecksNear(lat, lon)) {
     const kind = w[2] === 'W' ? 'Wreck' : w[2] === 'F' ? 'Fish haven' : 'Obstruction';
-    r.push([kind, `${w[5] ? `${w[5]} · ` : ''}${w[3] || ''}${w[4] != null ? ` · ${Math.round(w[4] * 3.28084)} ft over` : ''} · ${d.toFixed(2)} nm`]);
+    r.push([kind, `${w[5] ? `${w[5]} · ` : ''}${w[3] || ''}${w[4] != null ? ` · ${Math.round(w[4] * 3.28084)} ft over` : ''} · ${d.toFixed(2)} nm`, INFO.wreck(kind)]);
   }
-  if (inLoran(lat, lon)) r.push([`Loran ${S.tdPair[0]}/${S.tdPair[1]}`, fmtTd(lat, lon)]);
+  if (inLoran(lat, lon)) r.push([`Loran ${S.tdPair[0]}/${S.tdPair[1]}`, fmtTd(lat, lon), INFO.loran]);
   const home = PORTS.find((x) => x[0] === S.home);
-  if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
-  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0]}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
+  if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`, INFO.run(d)]); }
+  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0]}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`, INFO.run(d)]); }
   return r;
 }
 
@@ -3137,8 +3246,8 @@ function nowConditions(lat, lon) {
   ]).then(([w, m]) => {
     const r = [], dirTxt = (d) => ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
     const c = w?.current, mc = m?.current;
-    if (c?.wind_speed_10m != null) r.push(['Wind now', `${dirTxt(c.wind_direction_10m)} ${Math.round(c.wind_speed_10m)} kt${c.wind_gusts_10m != null ? `, gusts ${Math.round(c.wind_gusts_10m)}` : ''}`]);
-    if (mc?.wave_height != null) r.push(['Seas now', `${(mc.wave_height * 3.28084).toFixed(1)} ft${mc.wave_period != null ? ` @ ${Math.round(mc.wave_period)} s` : ''}${mc.wave_direction != null ? ` from ${dirTxt(mc.wave_direction)}` : ''}`]);
+    if (c?.wind_speed_10m != null) r.push(['Wind now', `${dirTxt(c.wind_direction_10m)} ${Math.round(c.wind_speed_10m)} kt${c.wind_gusts_10m != null ? `, gusts ${Math.round(c.wind_gusts_10m)}` : ''}`, INFO.wind(c.wind_speed_10m)]);
+    if (mc?.wave_height != null) r.push(['Seas now', `${(mc.wave_height * 3.28084).toFixed(1)} ft${mc.wave_period != null ? ` @ ${Math.round(mc.wave_period)} s` : ''}${mc.wave_direction != null ? ` from ${dirTxt(mc.wave_direction)}` : ''}`, mc.wave_period != null ? INFO.seas(mc.wave_height * 3.28084, mc.wave_period) : null]);
     if (!r.length) NOWC.delete(key);
     return r;
   });
@@ -3147,20 +3256,29 @@ function nowConditions(lat, lon) {
 }
 function openReading(latlng, title) {
   const { lat, lng } = latlng;
-  const rows = readings(lat, lng).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
   // Build the popup as a DOM element (not an HTML string): Leaflet re-renders string content when it pans
   // the map to fit the popup, which would drop these button handlers.
   const el = document.createElement('div'); el.className = 'pp';
-  el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table>${rows}</table>
+  el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table></table>
     <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
     <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
+  const rowEls = ([k, v, info]) => {
+    const tr = document.createElement('tr'); tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+    if (!info) return [tr];
+    const b = document.createElement('button'); b.className = 'ppi'; b.type = 'button'; b.textContent = 'i'; b.title = `What does ${k.toLowerCase()} mean?`;
+    tr.firstChild.appendChild(b);
+    const note = document.createElement('tr'); note.className = 'ppnote'; note.hidden = true; note.innerHTML = `<td colspan="2">${info}</td>`;
+    b.onclick = (e) => { e.stopPropagation(); note.hidden = !note.hidden; b.classList.toggle('on', !note.hidden); pop.update(); };
+    return [tr, note];
+  };
+  el.querySelector('table').append(...readings(lat, lng).flatMap(rowEls));
   { // wind + seas right now, slotted in as rows once they arrive
     const tb = el.querySelector('table'), ld = document.createElement('tr');
     ld.innerHTML = '<td>Wind &amp; seas</td><td class="dim">loading…</td>'; tb.prepend(ld);
     nowConditions(lat, lng).then((r) => {
       if (!r.length) { ld.lastChild.textContent = 'unavailable right now'; return; }
-      ld.replaceWith(...r.map(([k, v]) => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${k}</td><td>${v}</td>`; return tr; }));
+      ld.replaceWith(...r.flatMap(rowEls));
       pop.update();
     });
   }
