@@ -3397,30 +3397,38 @@ chart = new Chart().addTo(map);
 // user to their own rows (see supabase/schema.sql). Empty = accounts switched off, app works as before.
 const SB_URL = 'https://uydsbqqjuxhbhhujhsgd.supabase.co', SB_KEY = 'sb_publishable_qQLZTM_1THgVTToQZAhiYA_IY5IEdL9';
 const ACCT = { sb: null, user: null, plan: 'free', busy: false, pushT: 0 };
-function sbLoad() {
-  if (ACCT.sb) return Promise.resolve(ACCT.sb);
-  return new Promise((ok, no) => {
-    const sc = document.createElement('script'); sc.src = 'vendor/supabase.js';
-    sc.onload = () => {
-      ACCT.sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'breakline.auth' } });
-      ACCT.sb.auth.onAuthStateChange((ev, sess) => {
-        const u = sess?.user || null, was = ACCT.user?.id;
-        ACCT.user = u; paintAcct();
-        if (u && u.id !== was) setTimeout(() => syncAll(true), 0);
-      });
-      ok(ACCT.sb);
-    };
-    sc.onerror = () => no(new Error('could not load the sign-in library'));
-    document.head.appendChild(sc);
+function sbInit() {
+  if (ACCT.sb || !window.supabase) return ACCT.sb;
+  ACCT.sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'breakline.auth' } });
+  ACCT.sb.auth.onAuthStateChange((ev, sess) => {
+    if (ev === 'PASSWORD_RECOVERY') { gateMode('recovery'); showGate(true); }
+    const u = sess?.user || null, was = ACCT.user?.id;
+    ACCT.user = u; paintAcct();
+    if (u && ev !== 'PASSWORD_RECOVERY') checkAccess();
+    if (!u && ev === 'SIGNED_OUT') { gateMode('signin'); showGate(true); }
+    if (u && u.id !== was) setTimeout(() => { claimDevice(u.id); syncAll(true); }, 0);
   });
+  return ACCT.sb;
+}
+const sbLoad = () => Promise.resolve(sbInit());
+// Spots on this device belong to whoever last signed in here; a different account starts clean
+function claimDevice(uid) {
+  const last = store.get('lastUid', null);
+  if (last && last !== uid) { S.wpts = []; for (const k of ['wptsIds', 'wptsGone', 'settingsU']) localStorage.removeItem('breakline.' + k); saveWpts(true); }
+  store.set('lastUid', uid);
 }
 const acctMsg = (t, bad) => { const m = $('acctMsg'); m.textContent = t || ''; m.classList.toggle('bad', !!bad); };
 function paintAcct() {
   const on = !!ACCT.user;
-  $('acctOut').hidden = on; $('acctIn').hidden = !on;
+  $('acct').hidden = !on;
   if (on) {
     $('acctWho').textContent = ACCT.user.email || 'your account';
-    $('acctPlan').textContent = ACCT.plan === 'pro' ? 'Pro' : 'Free';
+    const a = ACCT.access || {}, st = a.status;
+    $('acctPlan').textContent = st === 'free' ? 'Free account' : st === 'pro' ? `Subscribed${a.renews ? ` · renews ${new Date(a.renews).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}`
+      : st === 'trial' ? `Free trial · ${daysLeft(a.trial_ends)} day${daysLeft(a.trial_ends) === 1 ? '' : 's'} left` : st === 'expired' ? 'Trial ended' : '';
+    $('acctSubscribe').hidden = !(st === 'trial' || st === 'expired');
+    $('acctSubscribe').textContent = `Subscribe · ${PRICE_TXT}`;
+    $('acctManage').hidden = st !== 'pro';
   }
   $('btnWpts').classList.toggle('signed', on);
 }
@@ -3478,15 +3486,50 @@ async function syncSettings(first) {
     if (e2) throw e2;
   }
 }
-async function syncPlan() {
-  const { data } = await ACCT.sb.from('subscriptions').select('plan,status,current_period_end').eq('user_id', ACCT.user.id).maybeSingle();
-  ACCT.plan = data && data.plan === 'pro' && ['active', 'trialing'].includes(data.status) ? 'pro' : 'free'; paintAcct();
+// ---------- Access: 5-day free trial, then $75/yr; emails on the free_accounts list never pay ----------
+// Flip PAYWALL_LIVE to true once Stripe is set up (see supabase/SETUP.md). Until then an ended trial still gets in.
+const PAYWALL_LIVE = false, PRICE_TXT = '$75 a year';
+ACCT.access = store.get('access', null);
+async function checkAccess() {
+  if (!ACCT.user) return;
+  try {
+    const { data, error } = await ACCT.sb.rpc('my_access'); if (error) throw error;
+    ACCT.access = data; store.set('access', data);
+  } catch (e) { console.warn('access', e); }      // offline: keep the last answer, never lock someone out for no signal
+  applyAccess();
+}
+function applyAccess() {
+  const a = ACCT.access, st = a?.status;
+  ACCT.plan = st === 'pro' || st === 'free' ? 'pro' : 'free';
+  paintAcct();
+  if (G.mode === 'recovery' && !$('gate').hidden) return;
+  if (st === 'expired' && PAYWALL_LIVE) { gateMode('paywall'); showGate(true); }
+  else showGate(false);
+}
+const daysLeft = (t) => Math.max(0, Math.ceil((Date.parse(t) - Date.now()) / 864e5));
+async function payApi(path) {
+  const { data } = await ACCT.sb.auth.getSession();
+  const r = await fetch(path, { method: 'POST', headers: { Authorization: `Bearer ${data.session?.access_token || ''}` } });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 503) throw new Error('Subscriptions are not switched on yet.');
+  if (!r.ok || !j.url) throw new Error(j.error || `Payment page did not open (${r.status}).`);
+  location.href = j.url;
+}
+async function startCheckout(btn, say) {
+  btn.disabled = true; say('Opening the secure payment page…');
+  try { await payApi('/api/checkout'); } catch (e) { say(e.message, true); btn.disabled = false; }
+}
+// back from Stripe: the webhook can take a few seconds to land
+if (/[?&]paid=1/.test(location.search)) {
+  history.replaceState(null, '', location.pathname);
+  let n = 0; const poll = () => { if (!ACCT.user) { if (n++ < 20) setTimeout(poll, 1500); return; } checkAccess().then(() => { if (ACCT.access?.status !== 'pro' && n++ < 12) setTimeout(poll, 2500); else if (ACCT.access?.status === 'pro') status('You are subscribed. Thank you!'); }); };
+  setTimeout(poll, 1500);
 }
 async function syncAll(first) {
   if (!ACCT.user || ACCT.busy) { ACCT.again = true; return; }
   ACCT.busy = true; $('acctSync').textContent = 'Syncing…';
   try {
-    await syncSettings(first); await syncSpots(); await syncPlan().catch(() => {});
+    await syncSettings(first); await syncSpots(); await checkAccess().catch(() => {});
     $('acctSync').textContent = `Synced ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   } catch (e) {
     $('acctSync').textContent = navigator.onLine ? 'Sync failed: will retry' : 'Offline: will sync when you reconnect';
@@ -3499,45 +3542,92 @@ async function syncAll(first) {
 const queueSync = () => { if (!ACCT.user) return; clearTimeout(ACCT.pushT); ACCT.pushT = setTimeout(() => syncAll(), 1200); };
 ACCT_HOOK.spots = queueSync;
 ACCT_HOOK.settings = () => { if (ACCT.applying) return; store.set('settingsU', Date.now()); queueSync(); };
+// ---------- Sign-in screen: the app opens behind it until there's an account ----------
+const G = { mode: 'signin' };
+const gMsg = (t, bad) => { const m = $('gMsg'); m.innerHTML = t || ''; m.classList.toggle('bad', !!bad); };
+function showGate(on) { $('gate').hidden = !on; document.body.classList.toggle('gated', on); }
+function gateMode(m) {
+  G.mode = m; gMsg('');
+  const T = {
+    signin: ['Sign in', 'Welcome back. Your spots and settings are waiting.', 'Sign in', 'current-password'],
+    signup: ['Start your free trial', '5 days free, no card needed. Then $75 a year. Your spots and settings follow you to every device.', 'Create account', 'new-password'],
+    forgot: ['Reset your password', 'Enter your email and we will send you a link to set a new password.', 'Email me a reset link', ''],
+    recovery: ['Set a new password', 'Choose a new password for your account.', 'Save password', 'new-password'],
+    paywall: ['Your free trial has ended', `Keep every chart, every layer and your saved spots for ${PRICE_TXT}. Cancel any time.`, `Subscribe · ${PRICE_TXT}`, ''],
+  }[m];
+  $('gTitle').textContent = T[0]; $('gSub').textContent = T[1]; $('gGo').textContent = T[2];
+  $('gEmail').hidden = m === 'recovery' || m === 'paywall'; $('gPass').hidden = m === 'forgot' || m === 'paywall';
+  $('gPayLinks').hidden = m !== 'paywall';
+  $('gPass').autocomplete = T[3]; $('gPass').placeholder = m === 'signin' ? 'Password' : 'Password (8+ characters)';
+  $('gToSignup').textContent = m === 'signin' ? 'Create an account' : 'I already have an account';
+  $('gForgot').hidden = m !== 'signin';
+  $('gLinks').hidden = m === 'recovery' || m === 'paywall';
+}
+const gErr = (e) => {
+  const t = e?.message || String(e);
+  if (/invalid login/i.test(t)) return 'Wrong email or password.';
+  if (/not confirmed/i.test(t)) return 'Confirm your email first: open the link we sent you (check spam too). <a href="#" id="gResend">Send it again</a>';
+  if (/rate limit|too many/i.test(t)) return 'Too many emails went out in the last hour. Try again a bit later.';
+  if (/already registered/i.test(t)) return 'That email already has an account. Sign in instead.';
+  if (/password/i.test(t) && /(short|length|at least)/i.test(t)) return 'Use a password with at least 8 characters.';
+  if (/fetch|network/i.test(t)) return navigator.onLine ? 'Could not reach the sign-in server. Try again.' : 'You are offline. Connect to sign in.';
+  return t;
+};
+async function gateSubmit(ev) {
+  ev.preventDefault();
+  if (G.mode === 'paywall') { startCheckout($('gGo'), gMsg); return; }
+  const sb = sbInit(), email = $('gEmail').value.trim(), password = $('gPass').value;
+  if (!sb) { gMsg('Could not load sign-in. Reload the page.', true); return; }
+  if (G.mode !== 'recovery' && !/^\S+@\S+\.\S+$/.test(email)) { gMsg('Enter your email address.', true); return; }
+  if ((G.mode === 'signup' || G.mode === 'recovery') && password.length < 8) { gMsg('Use a password with at least 8 characters.', true); return; }
+  $('gGo').disabled = true; gMsg('One moment…');
+  const back = location.origin + '/app';
+  try {
+    if (G.mode === 'signin') {
+      const { error } = await sb.auth.signInWithPassword({ email, password }); if (error) throw error; gMsg('');
+    } else if (G.mode === 'signup') {
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back } }); if (error) throw error;
+      if (data.session) gMsg('');
+      else { gateMode('signin'); $('gEmail').value = email; gMsg(`Almost there: we sent a confirmation link to <b>${email.replace(/</g, '&lt;')}</b>. Open it, then sign in here. (Check spam if it doesn't show up.)`); }
+    } else if (G.mode === 'forgot') {
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: back }); if (error) throw error;
+      gMsg(`If ${email.replace(/</g, '&lt;')} has an account, a reset link is on its way.`);
+    } else if (G.mode === 'recovery') {
+      const { error } = await sb.auth.updateUser({ password }); if (error) throw error;
+      gMsg(''); showGate(false); status('Password updated.');
+    }
+  } catch (e) { gMsg(gErr(e), true); }
+  finally { $('gGo').disabled = false; }
+}
 if (SB_URL && SB_KEY) {
-  $('acct').hidden = false;
-  // sign-in: email a 6-digit code (works inside the installed phone app, where a tapped email link opens the browser instead)
-  $('acctSend').onclick = async () => {
-    const email = $('acctEmail').value.trim();
-    if (!/^\S+@\S+\.\S+$/.test(email)) { acctMsg('Enter your email address.', true); return; }
-    $('acctSend').disabled = true; acctMsg('Sending…');
-    try {
-      const sb = await sbLoad(), { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
-      if (error) throw error;
-      ACCT.email = email; $('acctCodeRow').hidden = false; $('acctCode').focus();
-      acctMsg(`Check ${email} and tap the sign-in link on this device. If the email shows a code instead, type it here.`);
-    } catch (e) { acctMsg(/rate|seconds/i.test(e.message) ? 'Too many tries: wait a minute and send again.' : `Couldn't send the code: ${e.message}`, true); }
-    finally { $('acctSend').disabled = false; }
-  };
-  $('acctVerify').onclick = async () => {
-    const token = $('acctCode').value.replace(/\D/g, '');
-    if (token.length < 6) { acctMsg('Enter the code from the email.', true); return; }
-    $('acctVerify').disabled = true; acctMsg('Signing in…');
-    try {
-      const { error } = await ACCT.sb.auth.verifyOtp({ email: ACCT.email, token, type: 'email' });
-      if (error) throw error;
-      acctMsg(''); $('acctCodeRow').hidden = true; $('acctCode').value = '';
-    } catch (e) { acctMsg(/expired|invalid/i.test(e.message) ? 'That code is wrong or expired. Send a new one.' : e.message, true); }
-    finally { $('acctVerify').disabled = false; }
-  };
-  $('acctCode').onkeydown = (e) => { if (e.key === 'Enter') $('acctVerify').click(); };
-  $('acctEmail').onkeydown = (e) => { if (e.key === 'Enter') $('acctSend').click(); };
+  $('gForm').onsubmit = gateSubmit;
+  $('gToSignup').onclick = (e) => { e.preventDefault(); gateMode(G.mode === 'signin' ? 'signup' : 'signin'); };
+  $('gForgot').onclick = (e) => { e.preventDefault(); gateMode('forgot'); };
+  $('gMsg').addEventListener('click', async (e) => {
+    if (e.target.id !== 'gResend') return; e.preventDefault();
+    const { error } = await ACCT.sb.auth.resend({ type: 'signup', email: $('gEmail').value.trim(), options: { emailRedirectTo: location.origin + '/app' } });
+    gMsg(error ? gErr(error) : 'Sent. Open the newest email.', !!error);
+  });
   $('acctOutBtn').onclick = async () => {
-    if (!confirm('Sign out? Your spots stay on this device too.')) return;
-    await ACCT.sb.auth.signOut(); ACCT.plan = 'free'; paintAcct();
+    if (!confirm('Sign out of Breakline on this device?')) return;
+    await ACCT.sb.auth.signOut(); ACCT.plan = 'free'; ACCT.access = null; localStorage.removeItem('breakline.access'); paintAcct();
   };
   $('acctSyncNow').onclick = () => syncAll();
+  $('acctSubscribe').onclick = () => startCheckout($('acctSubscribe'), acctMsg);
+  $('acctManage').onclick = async () => { $('acctManage').disabled = true; try { await payApi('/api/portal'); } catch (e) { acctMsg(e.message, true); } $('acctManage').disabled = false; };
+  $('gPayOut').onclick = async (e) => { e.preventDefault(); await ACCT.sb.auth.signOut(); };
+  $('gPayCheck').onclick = async (e) => { e.preventDefault(); gMsg('Checking…'); await checkAccess(); if (ACCT.access?.status === 'expired') gMsg('No subscription found yet. If you just paid, give it a minute.', true); };
   addEventListener('online', queueSync);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) queueSync(); });
-  // only load the sign-in library up front when there is a saved session (or a sign-in link just landed)
-  if (localStorage.getItem('breakline.auth') || /access_token|code=/.test(location.hash + location.search)) sbLoad().catch(() => {});
+  gateMode(/[?&]signup/.test(location.search) ? 'signup' : 'signin');
+  // a saved session opens straight into the chart; otherwise the sign-in screen waits for the session check
+  const had = !!localStorage.getItem('breakline.auth');
+  showGate(!had);
+  if (had && ACCT.access?.status === 'expired' && PAYWALL_LIVE) { gateMode('paywall'); showGate(true); }
+  if (!sbInit()) { gMsg('Could not load sign-in. Check your connection and reload.', true); showGate(true); }
+  else ACCT.sb.auth.getSession().then(({ data }) => { if (!data.session && !/access_token|type=recovery/.test(location.hash)) showGate(true); });
   paintAcct();
-}
+} else showGate(false);
 
 drawWpts();
 refresh();

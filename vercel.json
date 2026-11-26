@@ -5,6 +5,8 @@
   "outputDirectory": ".",
   "cleanUrls": false,
   "rewrites": [
+    { "source": "/app", "destination": "/app.html" },
+    { "source": "/app/", "destination": "/app.html" },
     { "source": "/erddap/pfeg/:path*",   "destination": "https://coastwatch.pfeg.noaa.gov/erddap/:path*" },
     { "source": "/erddap/cw/:path*",     "destination": "https://coastwatch.noaa.gov/erddap/:path*" },
     { "source": "/erddap/upwell/:path*", "destination": "https://upwell.pfeg.noaa.gov/erddap/:path*" },

@@ -48,6 +48,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/erddap/"):
             return self.proxy()
+        if self.path.split("?")[0].rstrip("/") == "/app":     # same as the vercel.json rewrite
+            self.path = "/app.html" + (self.path[len(self.path.split("?")[0]):])
         return super().do_GET()
 
     def proxy(self):

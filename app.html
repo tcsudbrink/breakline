@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1622">
+<title>Breakline · Chart</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Sign-in screen: covers the chart until there's an account -->
+<div id="gate" hidden>
+  <div class="gate-card">
+    <a class="gate-brand" href="/"><img src="icon.svg" alt="" width="28" height="28"> Breakline</a>
+    <h2 id="gTitle">Sign in</h2>
+    <p id="gSub" class="gate-sub"></p>
+    <form id="gForm" novalidate>
+      <input id="gEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email" required>
+      <input id="gPass" type="password" autocomplete="current-password" placeholder="Password">
+      <button id="gGo" type="submit">Sign in</button>
+    </form>
+    <p id="gMsg"></p>
+    <p id="gPayLinks" class="gate-links" hidden><a href="#" id="gPayCheck">I already paid</a><a href="#" id="gPayOut">Sign out</a></p>
+    <p id="gLinks" class="gate-links"><a href="#" id="gToSignup">Create an account</a><a href="#" id="gForgot">Forgot password?</a></p>
+    <p class="gate-foot"><a href="/">What is Breakline?</a></p>
+  </div>
+</div>
+<div id="map"></div>
+
+<!-- Left rail: one product at a time, like a chart service -->
+<nav id="rail" aria-label="Chart products">
+  <div class="brand" title="Breakline">BL</div>
+  <div class="prods">
+    <button class="prod" data-prod="sst"><span class="ico">SST</span><span>Temp</span></button>
+    <button class="prod" data-prod="goes"><span class="ico">HR</span><span>Hourly</span></button>
+    <button class="prod" data-prod="chl"><span class="ico">CHL</span><span>Color</span></button>
+    <button class="prod" data-prod="ssh"><span class="ico">SSH</span><span>Altimetry</span></button>
+    <button class="prod" data-prod="cur"><span class="ico">&#10148;</span><span>Currents</span></button>
+    <button class="prod" data-prod="sss"><span class="ico">SAL</span><span>Salinity</span></button>
+    <button class="prod" data-prod="mld"><span class="ico">MLD</span><span>Mix layer</span></button>
+    <button class="prod" data-prod="ftle"><span class="ico">FSLE</span><span>Fronts</span></button>
+    <button class="prod" data-prod="wx"><span class="ico">&#9729;</span><span>Weather</span></button>
+    <button class="prod" data-prod="bottom"><span class="ico">&#9650;</span><span>Bottom</span></button>
+    <button class="prod hot" data-prod="fish"><span class="ico">&#9733;</span><span>Where to fish</span></button>
+    <button class="prod" data-prod="ana"><span class="ico">AN</span><span>Analysis</span></button>
+  </div>
+  <div class="sep"></div>
+  <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
+  <button id="btnWpts" class="tool"><span class="ico">&#9670;</span><span>Spots</span></button>
+</nav>
+
+<!-- Date strip -->
+<div id="topLeft">
+  <select id="zone" aria-label="Jump to a fishing zone"><option value="">Jump to…</option></select>
+  <select id="homeTop" aria-label="Home port" title="Home port: range, bearing and the run limit are measured from here"></select>
+</div>
+
+<div id="datebar">
+  <button id="dPrev" aria-label="Back">&#9664;</button>
+  <div id="dLabel" title="Tap to pick a date">Latest</div>
+  <input id="datePick" type="date" aria-label="Pick a date" tabindex="-1">
+  <button id="dNext" aria-label="Forward">&#9654;</button>
+  <button id="dLatest" class="ghost">Latest</button>
+  <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">Charts &#9662;</button>
+</div>
+
+<div id="wxMode" hidden><button data-m="wind">Wind</button><button data-m="waves">Waves</button></div>
+
+<div id="status" hidden></div>
+
+<!-- Layers popover -->
+<section id="layers" class="panel" hidden>
+  <h3>Grid</h3>
+  <select id="gridMode">
+    <option value="ll">Lat / lon</option>
+    <option value="td">Loran TDs</option>
+    <option value="both">Both</option>
+    <option value="off">Off</option>
+  </select>
+  <div id="tdRow" class="row2">
+    <label class="lbl">TD pair</label>
+    <select id="tdPair"></select>
+  </div>
+
+  <h3>Overlays</h3>
+  <label><input type="checkbox" data-ov="breaks"> Temperature breaks</label>
+  <div class="row2 indent"><span class="lbl">Sensitivity</span><input id="brkThr" type="range" min="0.1" max="1.5" step="0.05" title="Right = more breaks"><span id="brkVal" class="val"></span></div>
+  <label><input type="checkbox" data-ov="iso"> Isotherms (every 1°F)</label>
+  <label><input type="checkbox" data-ov="rings"> Altimetry rings (eddies)</label>
+  <label><input type="checkbox" data-ov="cur"> Currents</label>
+  <label><input type="checkbox" data-ov="relief"> Bottom relief shading</label>
+  <label><input type="checkbox" data-ov="depth"> Depth lines (fathoms offshore, feet inshore)</label>
+  <label><input type="checkbox" data-ov="enc"> NOAA nautical chart, zoomed in (channels, buoys, soundings in feet)</label>
+  <label><input type="checkbox" data-ov="drop"> Drop-offs, zoomed in (orange = steep bottom)</label>
+  <label><input type="checkbox" data-ov="spots"> Fishing spots, artificial reefs + inshore marks</label>
+  <label><input type="checkbox" data-ov="places"> Place names (canyons, banks, capes, towns)</label>
+  <label><input type="checkbox" data-ov="wrecks"> Wrecks, fish havens, obstructions</label>
+  <label><input type="checkbox" data-ov="buoys"> Live buoys (NDBC)</label>
+  <label><input type="checkbox" data-ov="ports"> Inlets</label>
+
+  <h3>Home inlet</h3>
+  <select id="homePort"></select>
+  <p class="hint">Range and bearing in the readout are measured from here.</p>
+
+  <h3>Go to Loran TDs</h3>
+  <div class="row2"><input id="tdA" type="number" step="0.1" placeholder="TD 1"><input id="tdB" type="number" step="0.1" placeholder="TD 2"><button id="tdGo">Go</button></div>
+  <details>
+    <summary class="hint">Calibrate TDs</summary>
+    <p class="hint">Computed TDs skip local land-path corrections. If your plotter reads a known spot differently, enter the difference (plotter minus Breakline).</p>
+    <div class="row2"><input id="tdOffA" type="number" step="0.1" placeholder="Offset 1"><input id="tdOffB" type="number" step="0.1" placeholder="Offset 2"></div>
+  </details>
+</section>
+
+<!-- Waypoints drawer -->
+<section id="wpts" class="panel" hidden>
+  <div id="acct" hidden>
+    <h3>Account</h3>
+    <p class="acct-who">Signed in as <b id="acctWho"></b> · <span id="acctPlan">Free</span></p>
+    <div class="row"><span id="acctSync" class="hint">Synced</span><button id="acctSyncNow" class="ghost">Sync now</button><button id="acctOutBtn" class="ghost">Sign out</button></div>
+    <div class="row"><button id="acctSubscribe" hidden>Subscribe</button><button id="acctManage" class="ghost" hidden>Manage subscription</button></div>
+    <p id="acctMsg" class="hint"></p>
+  </div>
+  <h3>Spots <span id="wCount"></span></h3>
+  <p class="hint">Tap the chart to read the water and save a spot.</p>
+  <ol id="wList"></ol>
+  <div class="row">
+    <button id="wGpx">Export GPX</button>
+    <button id="wClear" class="ghost">Clear all</button>
+  </div>
+</section>
+
+<!-- Where to fish -->
+<section id="fishPanel" class="panel side" hidden>
+  <h3>Where to fish <button id="fishClose" class="x" aria-label="Hide list (spots stay on the chart)" title="Hide list (spots stay on the chart)">&times;</button></h3>
+  <div class="row2"><select id="species"></select></div>
+  <div class="row2"><span class="lbl">Max run</span><input id="maxRun" type="range" min="20" max="200" step="5"><span id="maxRunVal" class="val"></span></div>
+  <div class="row2"><span class="lbl">Depth</span><input id="depMin" type="number" min="0" step="10" placeholder="min fm"><span class="lbl">to</span><input id="depMax" type="number" min="0" step="50" placeholder="any"><span class="lbl">fm</span></div>
+  <p class="hint long">Scores every spot on water temp for the species, then temp breaks, color edges, steep bottom and eddy edges, and marks it down in strong current. A starting point, not a promise.</p>
+  <p id="fishBasis" class="hint"></p>
+  <ol id="spotList"></ol>
+  <h3 id="fishTimesHdr">Best times</h3>
+  <div id="fishTimes"></div>
+</section>
+
+<!-- Ocean analysis write-up -->
+<section id="anaPanel" class="panel side" hidden>
+  <h3>Ocean analysis <button id="anaClose" class="x" aria-label="Hide write-up (outlines stay on the chart)" title="Hide write-up (outlines stay on the chart)">&times;</button></h3>
+  <div class="row2"><select id="anaSpecies" aria-label="Species"></select></div>
+  <div id="anaSeg"><button data-v="now" class="on">Right now</button><button data-v="tom">Tomorrow</button></div>
+  <div id="anaBody"></div>
+  <div id="anaTom" hidden></div>
+  <div class="row"><button id="anaCopy">Copy write-up</button></div>
+</section>
+
+<!-- Measure bar -->
+<div id="measureBar" hidden>
+  <span id="measureTxt">Tap the chart to drop points</span>
+  <button id="measureUndo" class="ghost">Undo</button><button id="measureClear" class="ghost">Clear</button><button id="measureDone">Done</button>
+</div>
+
+<!-- Location blocked help -->
+<section id="locHelp" class="panel" hidden>
+  <h3>Location is blocked for this site</h3>
+  <div id="locSteps"></div>
+  <div class="row"><button id="locRetry">Try again</button><button id="locClose" class="ghost">Close</button></div>
+</section>
+
+<!-- Chart picker -->
+<section id="picker" hidden>
+  <header>
+    <div id="pkTabs"><button data-fam="sst">Water temp</button><button data-fam="goes">Hourly temp</button><button data-fam="chl">Chlorophyll</button></div>
+    <span id="pkScale"></span>
+    <button id="pkClose" aria-label="Close">&times;</button>
+  </header>
+  <p class="hint pkHint">Every satellite source for the area on your screen, newest first. Dark gaps are clouds. Tap one to load it.</p>
+  <div id="pkGrid"></div>
+</section>
+
+<!-- Bottom: cursor readout + legend -->
+<footer id="foot">
+  <div id="readout">Move over the chart</div>
+  <div id="legend">
+    <div id="lgTitle"></div>
+    <div id="lgTrack">
+      <div id="lgBar"></div>
+      <div class="thumb" id="thLo" tabindex="0" aria-label="Low end of color range"><span></span></div>
+      <div class="thumb" id="thHi" tabindex="0" aria-label="High end of color range"><span></span></div>
+    </div>
+    <div id="lgFoot"><span id="lgMin"></span><button id="lgAuto" class="ghost on" title="Fit colors to what is on screen">Auto</button><span id="lgMax"></span></div>
+  </div>
+</footer>
+
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/d3-array.min.js"></script>
+<script src="vendor/d3-contour.min.js"></script>
+<script src="loran.js"></script>
+<script src="solunar.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

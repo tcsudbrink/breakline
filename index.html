@@ -4,192 +4,189 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b1622">
-<title>Breakline</title>
-<link rel="manifest" href="manifest.webmanifest">
+<title>Breakline · Satellite fishing charts for offshore and inshore</title>
+<meta name="description" content="Water temperature, color, altimetry and currents on one chart, with picks for where to fish offshore and inshore. East Coast, Florida, the Bahamas, the Caribbean and Pacific Mexico and Costa Rica.">
+<meta property="og:title" content="Breakline · Find the water before you burn the fuel">
+<meta property="og:description" content="Satellite fishing charts: temp breaks, color edges, eddies, currents, tides and where to fish.">
+<meta property="og:image" content="https://breakline-xi.vercel.app/img/sst.jpg">
 <link rel="icon" href="icon.svg">
-<link rel="apple-touch-icon" href="icon.svg">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="vendor/leaflet.css">
-<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="site.css">
+<script>
+  // the installed phone app opens here first: someone already signed in goes straight to the chart
+  if ((matchMedia('(display-mode: standalone)').matches || navigator.standalone) && localStorage.getItem('breakline.auth')) location.replace('/app');
+</script>
 </head>
 <body>
-<div id="map"></div>
 
-<!-- Left rail: one product at a time, like a chart service -->
-<nav id="rail" aria-label="Chart products">
-  <div class="brand" title="Breakline">BL</div>
-  <div class="prods">
-    <button class="prod" data-prod="sst"><span class="ico">SST</span><span>Temp</span></button>
-    <button class="prod" data-prod="goes"><span class="ico">HR</span><span>Hourly</span></button>
-    <button class="prod" data-prod="chl"><span class="ico">CHL</span><span>Color</span></button>
-    <button class="prod" data-prod="ssh"><span class="ico">SSH</span><span>Altimetry</span></button>
-    <button class="prod" data-prod="cur"><span class="ico">&#10148;</span><span>Currents</span></button>
-    <button class="prod" data-prod="sss"><span class="ico">SAL</span><span>Salinity</span></button>
-    <button class="prod" data-prod="mld"><span class="ico">MLD</span><span>Mix layer</span></button>
-    <button class="prod" data-prod="ftle"><span class="ico">FSLE</span><span>Fronts</span></button>
-    <button class="prod" data-prod="wx"><span class="ico">&#9729;</span><span>Weather</span></button>
-    <button class="prod" data-prod="bottom"><span class="ico">&#9650;</span><span>Bottom</span></button>
-    <button class="prod hot" data-prod="fish"><span class="ico">&#9733;</span><span>Where to fish</span></button>
-    <button class="prod" data-prod="ana"><span class="ico">AN</span><span>Analysis</span></button>
+<header class="nav">
+  <a class="brand" href="/"><img src="icon.svg" alt="" width="30" height="30"><span>Breakline</span></a>
+  <nav class="links">
+    <a href="#how">How it works</a>
+    <a href="#data">The data</a>
+    <a href="#inshore">Inshore</a>
+    <a href="#coverage">Coverage</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <div class="cta">
+    <a class="btn ghost" href="/app">Sign in</a>
+    <a class="btn" href="/app?signup">Free trial</a>
   </div>
-  <div class="sep"></div>
-  <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
-  <button id="btnWpts" class="tool"><span class="ico">&#9670;</span><span>Spots</span></button>
-</nav>
+</header>
 
-<!-- Date strip -->
-<div id="topLeft">
-  <select id="zone" aria-label="Jump to a fishing zone"><option value="">Jump to…</option></select>
-  <select id="homeTop" aria-label="Home port" title="Home port: range, bearing and the run limit are measured from here"></select>
-</div>
-
-<div id="datebar">
-  <button id="dPrev" aria-label="Back">&#9664;</button>
-  <div id="dLabel" title="Tap to pick a date">Latest</div>
-  <input id="datePick" type="date" aria-label="Pick a date" tabindex="-1">
-  <button id="dNext" aria-label="Forward">&#9654;</button>
-  <button id="dLatest" class="ghost">Latest</button>
-  <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">Charts &#9662;</button>
-</div>
-
-<div id="wxMode" hidden><button data-m="wind">Wind</button><button data-m="waves">Waves</button></div>
-
-<div id="status" hidden></div>
-
-<!-- Layers popover -->
-<section id="layers" class="panel" hidden>
-  <h3>Grid</h3>
-  <select id="gridMode">
-    <option value="ll">Lat / lon</option>
-    <option value="td">Loran TDs</option>
-    <option value="both">Both</option>
-    <option value="off">Off</option>
-  </select>
-  <div id="tdRow" class="row2">
-    <label class="lbl">TD pair</label>
-    <select id="tdPair"></select>
-  </div>
-
-  <h3>Overlays</h3>
-  <label><input type="checkbox" data-ov="breaks"> Temperature breaks</label>
-  <div class="row2 indent"><span class="lbl">Sensitivity</span><input id="brkThr" type="range" min="0.1" max="1.5" step="0.05" title="Right = more breaks"><span id="brkVal" class="val"></span></div>
-  <label><input type="checkbox" data-ov="iso"> Isotherms (every 1°F)</label>
-  <label><input type="checkbox" data-ov="rings"> Altimetry rings (eddies)</label>
-  <label><input type="checkbox" data-ov="cur"> Currents</label>
-  <label><input type="checkbox" data-ov="relief"> Bottom relief shading</label>
-  <label><input type="checkbox" data-ov="depth"> Depth lines (fathoms offshore, feet inshore)</label>
-  <label><input type="checkbox" data-ov="enc"> NOAA nautical chart, zoomed in (channels, buoys, soundings in feet)</label>
-  <label><input type="checkbox" data-ov="drop"> Drop-offs, zoomed in (orange = steep bottom)</label>
-  <label><input type="checkbox" data-ov="spots"> Fishing spots, artificial reefs + inshore marks</label>
-  <label><input type="checkbox" data-ov="places"> Place names (canyons, banks, capes, towns)</label>
-  <label><input type="checkbox" data-ov="wrecks"> Wrecks, fish havens, obstructions</label>
-  <label><input type="checkbox" data-ov="buoys"> Live buoys (NDBC)</label>
-  <label><input type="checkbox" data-ov="ports"> Inlets</label>
-
-  <h3>Home inlet</h3>
-  <select id="homePort"></select>
-  <p class="hint">Range and bearing in the readout are measured from here.</p>
-
-  <h3>Go to Loran TDs</h3>
-  <div class="row2"><input id="tdA" type="number" step="0.1" placeholder="TD 1"><input id="tdB" type="number" step="0.1" placeholder="TD 2"><button id="tdGo">Go</button></div>
-  <details>
-    <summary class="hint">Calibrate TDs</summary>
-    <p class="hint">Computed TDs skip local land-path corrections. If your plotter reads a known spot differently, enter the difference (plotter minus Breakline).</p>
-    <div class="row2"><input id="tdOffA" type="number" step="0.1" placeholder="Offset 1"><input id="tdOffB" type="number" step="0.1" placeholder="Offset 2"></div>
-  </details>
-</section>
-
-<!-- Waypoints drawer -->
-<section id="wpts" class="panel" hidden>
-  <div id="acct" hidden>
-    <h3>Account</h3>
-    <div id="acctOut">
-      <p class="hint">Sign in to keep your spots, home port and Loran or lat/long setting on every phone and computer you use.</p>
-      <div class="row acct-row"><input id="acctEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email address"><button id="acctSend">Email me a sign-in link</button></div>
-      <div id="acctCodeRow" class="row acct-row" hidden><input id="acctCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code (if the email has one)"><button id="acctVerify">Sign in</button></div>
+<section class="hero">
+  <div class="hero-copy">
+    <p class="kicker">Satellite fishing charts</p>
+    <h1>Find the water<br>before you burn the fuel.</h1>
+    <p class="lead">Water temperature, color, altimetry and currents on one chart, plus picks for where to fish, offshore and inshore. Built by a fisherman, for the run out of your inlet.</p>
+    <div class="hero-btns">
+      <a class="btn big" href="/app?signup">Start your 5-day free trial</a>
+      <a class="btn big ghost" href="/app">Sign in</a>
     </div>
-    <div id="acctIn" hidden>
-      <p class="acct-who">Signed in as <b id="acctWho"></b> · <span id="acctPlan">Free</span></p>
-      <div class="row"><span id="acctSync" class="hint">Synced</span><button id="acctSyncNow" class="ghost">Sync now</button><button id="acctOutBtn" class="ghost">Sign out</button></div>
-    </div>
-    <p id="acctMsg" class="hint"></p>
+    <p class="fine">5 days free, then $75 a year. No card needed to start. Works on your phone, tablet and computer.</p>
   </div>
-  <h3>Spots <span id="wCount"></span></h3>
-  <p class="hint">Tap the chart to read the water and save a spot.</p>
-  <ol id="wList"></ol>
-  <div class="row">
-    <button id="wGpx">Export GPX</button>
-    <button id="wClear" class="ghost">Clear all</button>
+  <figure class="hero-shot shot">
+    <img src="img/sst.jpg" alt="Breakline water temperature chart of the Mid-Atlantic with depth lines, canyons and eddy rings" width="1288" height="952">
+  </figure>
+</section>
+
+<section id="how" class="band">
+  <p class="kicker">How it works</p>
+  <h2>Three steps from the dock to the bite</h2>
+  <div class="steps">
+    <article>
+      <span class="num">01</span>
+      <h3>Read the water</h3>
+      <p>Temp breaks, color edges, eddies and current lines, drawn on the chart so the edges jump out. Flip between water temp, color, altimetry and currents to see where they agree.</p>
+    </article>
+    <article>
+      <span class="num">02</span>
+      <h3>Pick the spot</h3>
+      <p>Choose your species and Where to fish scores every spot inside your run on temp, breaks, color, bottom and eddy edges. Tap anywhere and every reading comes with a plain-English note on what it means.</p>
+    </article>
+    <article>
+      <span class="num">03</span>
+      <h3>Run it</h3>
+      <p>Wind, seas, tides and the solunar bite windows for the spot. Save it in lat/long or Loran, export to your chartplotter as GPX, and it's on every device you sign in on.</p>
+    </article>
   </div>
 </section>
 
-<!-- Where to fish -->
-<section id="fishPanel" class="panel side" hidden>
-  <h3>Where to fish <button id="fishClose" class="x" aria-label="Hide list (spots stay on the chart)" title="Hide list (spots stay on the chart)">&times;</button></h3>
-  <div class="row2"><select id="species"></select></div>
-  <div class="row2"><span class="lbl">Max run</span><input id="maxRun" type="range" min="20" max="200" step="5"><span id="maxRunVal" class="val"></span></div>
-  <div class="row2"><span class="lbl">Depth</span><input id="depMin" type="number" min="0" step="10" placeholder="min fm"><span class="lbl">to</span><input id="depMax" type="number" min="0" step="50" placeholder="any"><span class="lbl">fm</span></div>
-  <p class="hint long">Scores every spot on water temp for the species, then temp breaks, color edges, steep bottom and eddy edges, and marks it down in strong current. A starting point, not a promise.</p>
-  <p id="fishBasis" class="hint"></p>
-  <ol id="spotList"></ol>
-  <h3 id="fishTimesHdr">Best times</h3>
-  <div id="fishTimes"></div>
-</section>
-
-<!-- Ocean analysis write-up -->
-<section id="anaPanel" class="panel side" hidden>
-  <h3>Ocean analysis <button id="anaClose" class="x" aria-label="Hide write-up (outlines stay on the chart)" title="Hide write-up (outlines stay on the chart)">&times;</button></h3>
-  <div class="row2"><select id="anaSpecies" aria-label="Species"></select></div>
-  <div id="anaSeg"><button data-v="now" class="on">Right now</button><button data-v="tom">Tomorrow</button></div>
-  <div id="anaBody"></div>
-  <div id="anaTom" hidden></div>
-  <div class="row"><button id="anaCopy">Copy write-up</button></div>
-</section>
-
-<!-- Measure bar -->
-<div id="measureBar" hidden>
-  <span id="measureTxt">Tap the chart to drop points</span>
-  <button id="measureUndo" class="ghost">Undo</button><button id="measureClear" class="ghost">Clear</button><button id="measureDone">Done</button>
-</div>
-
-<!-- Location blocked help -->
-<section id="locHelp" class="panel" hidden>
-  <h3>Location is blocked for this site</h3>
-  <div id="locSteps"></div>
-  <div class="row"><button id="locRetry">Try again</button><button id="locClose" class="ghost">Close</button></div>
-</section>
-
-<!-- Chart picker -->
-<section id="picker" hidden>
-  <header>
-    <div id="pkTabs"><button data-fam="sst">Water temp</button><button data-fam="goes">Hourly temp</button><button data-fam="chl">Chlorophyll</button></div>
-    <span id="pkScale"></span>
-    <button id="pkClose" aria-label="Close">&times;</button>
-  </header>
-  <p class="hint pkHint">Every satellite source for the area on your screen, newest first. Dark gaps are clouds. Tap one to load it.</p>
-  <div id="pkGrid"></div>
-</section>
-
-<!-- Bottom: cursor readout + legend -->
-<footer id="foot">
-  <div id="readout">Move over the chart</div>
-  <div id="legend">
-    <div id="lgTitle"></div>
-    <div id="lgTrack">
-      <div id="lgBar"></div>
-      <div class="thumb" id="thLo" tabindex="0" aria-label="Low end of color range"><span></span></div>
-      <div class="thumb" id="thHi" tabindex="0" aria-label="High end of color range"><span></span></div>
-    </div>
-    <div id="lgFoot"><span id="lgMin"></span><button id="lgAuto" class="ghost on" title="Fit colors to what is on screen">Auto</button><span id="lgMax"></span></div>
+<section class="feature">
+  <figure class="shot"><img src="img/ssh.jpg" alt="Altimetry chart with warm and cold eddies and the tap-for-readings box" width="1288" height="952" loading="lazy"></figure>
+  <div>
+    <p class="kicker">Tap anywhere</p>
+    <h2>Every reading, explained</h2>
+    <p>Tap the chart and get the water temp, color, altimetry, current, depth, wind and seas at that exact spot, plus the Loran TDs and the distance from your inlet.</p>
+    <ul class="ticks">
+      <li>Each reading has an <b>(i)</b> note: what it is, what this number means, and what to expect there.</li>
+      <li>Altimetry tells you if you're on a warm eddy (downwelling) or a cold one (upwelling), and when you're near the edge where the current runs.</li>
+      <li>One tap opens the hour-by-hour wind and seas forecast and the best fishing times for that spot.</li>
+    </ul>
   </div>
+</section>
+
+<section class="feature flip">
+  <figure class="shot"><img src="img/chl.jpg" alt="Chlorophyll (water color) chart of South Florida and the Bahamas" width="1288" height="952" loading="lazy"></figure>
+  <div>
+    <p class="kicker">Clouds happen</p>
+    <h2>The freshest clear look, every hour</h2>
+    <p>Breakline pulls every new satellite pass for your area and keeps the clear pixels. Hourly GOES scans, the polar passes, and 1-day and 3-day composites that stack every look so clouds don't leave you blind.</p>
+    <ul class="ticks">
+      <li>Browse every pass for your area as thumbnails and pick the clearest one.</li>
+      <li>Water-temp drift forecast moves today's edges forward with the currents.</li>
+      <li>Recent charts are saved on your device, so the last look is there when signal drops.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="data" class="band">
+  <p class="kicker">The data</p>
+  <h2>Every layer the pros look at</h2>
+  <div class="grid">
+    <div class="card"><h3>Water temperature</h3><p>Daily cloud-free blend, hourly GOES-19 scans, single polar passes and 1-day and 3-day composites, with breaks outlined automatically.</p></div>
+    <div class="card"><h3>Chlorophyll (color)</h3><p>Blue water against green water, from VIIRS and Sentinel-3 passes plus a gap-free daily blend.</p></div>
+    <div class="card"><h3>Altimetry</h3><p>Sea-surface height that shows warm and cold eddies, even under clouds, with the rings drawn on the chart.</p></div>
+    <div class="card"><h3>Currents</h3><p>Surface current speed and direction, with high-frequency radar near the coast and forecasts up to a week out.</p></div>
+    <div class="card"><h3>Fronts</h3><p>Convergence lines worked out from the currents: where weed, debris and bait get pushed together.</p></div>
+    <div class="card"><h3>Salinity</h3><p>River plumes and the salty edge of the Gulf Stream, often lined up with a color break.</p></div>
+    <div class="card"><h3>Mixed layer</h3><p>How deep the warm surface layer goes, so you know when to run baits deeper.</p></div>
+    <div class="card"><h3>Wind and seas</h3><p>Model forecasts of wind, gusts, wave height and period across the whole run, not just the beach.</p></div>
+    <div class="card"><h3>Bottom</h3><p>Shaded relief, depth lines in fathoms offshore and feet inshore, drop-offs, wrecks, reefs and fish havens.</p></div>
+    <div class="card"><h3>NOAA nautical chart</h3><p>Channels, buoys and soundings drawn in when you zoom in close to the inlet.</p></div>
+    <div class="card"><h3>Analysis</h3><p>An automatic read of the water: numbered breaks, color edges, current edges, eddy centers and a written run plan.</p></div>
+    <div class="card"><h3>Best times</h3><p>Solunar majors and minors, sunrise and sunset, and the tide turns, with the windows where they line up starred.</p></div>
+  </div>
+</section>
+
+<section id="inshore" class="feature">
+  <figure class="shot"><img src="img/inshore.jpg" alt="Inshore flounder picks at Ocean City Inlet over the NOAA nautical chart, with tides, solunar and wind" width="1288" height="952" loading="lazy"></figure>
+  <div>
+    <p class="kicker">Inshore too</p>
+    <h2>From the canyon to the back bay</h2>
+    <p>Pick flounder, striped bass, red drum, speckled trout, snook or tarpon and Breakline ranks the inlets, jetties, piers, reefs, shoals and drop-offs on your screen.</p>
+    <ul class="ticks">
+      <li>Every pick lists the tides at the nearest NOAA station and which stage to fish.</li>
+      <li>Solunar windows and the wind during the bite, with a heads-up when it's too much for the spot.</li>
+      <li>High-resolution bottom shows the drop-offs inside the inlet.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="coverage" class="band">
+  <p class="kicker">Coverage</p>
+  <h2>Where Breakline fishes</h2>
+  <p class="sub">The chart works anywhere from Maine to Panama. These areas also get hourly snapshots for instant loading and local home ports.</p>
+  <div class="zones">
+    <span>Northeast canyons</span><span>Mid-Atlantic</span><span>Carolinas &amp; Georgia</span><span>Florida &amp; Bahamas</span>
+    <span>Cancún, Isla Mujeres, Cozumel</span><span>Punta Cana / Cap Cana</span><span>St. Lucia</span>
+    <span>Cabo San Lucas &amp; Mag Bay</span><span>Chiapas</span><span>Costa Rica (Pacific)</span><span>Costa Rica offshore / Cocos</span>
+  </div>
+</section>
+
+<section id="pricing" class="band pricing">
+  <p class="kicker">Pricing</p>
+  <h2>One plan. Everything in it.</h2>
+  <p class="sub center">Try it free for 5 days, no card needed. Then it's $75 a year, less than one tank of fuel.</p>
+  <div class="plan">
+    <div class="plan-head"><h3>Breakline</h3><p class="price">$75<small>/year</small></p></div>
+    <p class="fine plan-sub">About $6.25 a month, billed yearly. Cancel any time.</p>
+    <ul class="ticks">
+      <li>Every chart, every layer, every area</li>
+      <li>Hourly water temp plus 1-day and 3-day composites</li>
+      <li>Where to fish, offshore and inshore</li>
+      <li>Tides, wind, seas and best times for every spot</li>
+      <li>Unlimited saved spots in lat/long or Loran, synced to every device</li>
+      <li>GPX export for your chartplotter</li>
+    </ul>
+    <a class="btn big" href="/app?signup">Start your 5-day free trial</a>
+  </div>
+</section>
+
+<section id="faq" class="band faq">
+  <p class="kicker">FAQ</p>
+  <h2>Questions</h2>
+  <details><summary>Where does the data come from?</summary><p>NOAA, NASA and the EU's Copernicus Marine service: the same satellites and ocean models the paid chart services use. Breakline pulls them together, draws the edges and adds the fishing.</p></details>
+  <details><summary>How fresh is it?</summary><p>Hourly water-temp scans arrive a few hours after the satellite passes; the polar passes and the daily blends are usually from the last day or two. Clouds block the satellites, so Breakline keeps the newest clear look for every spot and tells you how old it is.</p></details>
+  <details><summary>Does it work on my phone?</summary><p>Yes. Open it in your phone's browser and add it to your home screen to use it like an app. Recent charts are saved on the phone, so they're still there when you lose signal offshore.</p></details>
+  <details><summary>Can I use my old Loran numbers?</summary><p>Yes. Show the grid in Loran TDs, lat/long or both, pick your chain, and every saved spot keeps its TDs.</p></details>
+  <details><summary>How does the free trial work?</summary><p>Create an account and you get everything for 5 days, no card needed. When the trial ends, subscribe for $75 a year to keep going. Your saved spots stay in your account either way.</p></details>
+  <details><summary>Why do I need an account?</summary><p>Your spots, home port and settings are saved to your account, so they're on every phone and computer you sign in on.</p></details>
+  <details><summary>Can I navigate with it?</summary><p>No. Breakline is a fishing planning tool. Always navigate with proper charts and your own electronics.</p></details>
+</section>
+
+<section class="final">
+  <h2>Your next run starts with the next clear pass.</h2>
+  <a class="btn big" href="/app?signup">Start your 5-day free trial</a>
+  <p class="fine">Already have one? <a href="/app">Sign in</a></p>
+</section>
+
+<footer>
+  <div class="brand"><img src="icon.svg" alt="" width="22" height="22"><span>Breakline</span></div>
+  <p>Satellite data from NOAA, NASA and Copernicus Marine. Not for navigation.</p>
+  <p>&copy; 2026 Breakline</p>
 </footer>
 
-<script src="vendor/leaflet.js"></script>
-<script src="vendor/d3-array.min.js"></script>
-<script src="vendor/d3-contour.min.js"></script>
-<script src="loran.js"></script>
-<script src="solunar.js"></script>
-<script src="app.js"></script>
 </body>
 </html>

@@ -64,3 +64,30 @@ end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- ---------- Access: 5-day free trial, then a subscription; free_accounts overrides both ----------
+-- To make someone free: Table Editor -> free_accounts -> Insert row (their email). Works before they sign up.
+-- No policies on this table, so nobody can read or change it through the app; only you in the dashboard.
+create table if not exists public.free_accounts (
+  email text primary key,
+  note text,
+  added_at timestamptz not null default now()
+);
+alter table public.free_accounts enable row level security;
+
+-- What the signed-in user can do right now: free | pro | trial | expired
+create or replace function public.my_access() returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object(
+    'status', case
+      when exists (select 1 from public.free_accounts f where lower(f.email) = lower(u.email)) then 'free'
+      when exists (select 1 from public.subscriptions s where s.user_id = u.id and s.plan = 'pro'
+                   and s.status in ('active', 'trialing', 'past_due')) then 'pro'
+      when u.created_at > now() - interval '5 days' then 'trial'
+      else 'expired' end,
+    'trial_ends', u.created_at + interval '5 days',
+    'renews', (select s.current_period_end from public.subscriptions s where s.user_id = u.id))
+  from auth.users u where u.id = auth.uid();
+$$;
+revoke execute on function public.my_access() from public, anon;
+grant execute on function public.my_access() to authenticated;
