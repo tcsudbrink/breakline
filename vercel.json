@@ -4,6 +4,9 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "cleanUrls": false,
+  "redirects": [
+    { "source": "/:path*", "has": [{ "type": "host", "value": "breakline-xi.vercel.app" }], "destination": "https://www.breaklinefishing.com/:path*", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/app", "destination": "/app.html" },
     { "source": "/app/", "destination": "/app.html" },

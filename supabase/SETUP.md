@@ -28,9 +28,9 @@ Breakline signs people in with a 6-digit code sent to their email. A link alone 
 ## 4. Allowed web addresses
 Go to **Authentication**, then **URL Configuration**.
 
-1. Set **Site URL** to `https://breakline-xi.vercel.app`.
+1. Set **Site URL** to `https://www.breaklinefishing.com`.
 2. Add these under **Redirect URLs**:
-   - `https://breakline-xi.vercel.app/**`
+   - `https://www.breaklinefishing.com/**` and `https://breaklinefishing.com/**`
    - `http://localhost:8791/**`
 
 ## 5. Hand over the keys
@@ -58,7 +58,7 @@ Supabase -> **Table Editor** -> `free_accounts` -> **Insert row**: their email (
 1. Create a Stripe account at https://stripe.com (yours to do), and leave it in **Test mode** at first.
 2. **Product catalog** -> **Add product**: name `Breakline`, price **$75.00**, **Recurring**, **Yearly**. Copy the price ID (`price_...`).
 3. **Developers** -> **Webhooks** -> **Add endpoint**:
-   - URL: `https://breakline-xi.vercel.app/api/stripe-webhook`
+   - URL: `https://www.breaklinefishing.com/api/stripe-webhook`
    - Events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`
    - Copy the signing secret (`whsec_...`).
 4. **Settings** -> **Billing** -> **Customer portal**: turn it on (lets people update their card or cancel).

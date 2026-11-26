@@ -1,5 +1,5 @@
 // POST /api/stripe-webhook: Stripe tells us when a subscription starts, renews, lapses or is cancelled.
-// Stripe -> Developers -> Webhooks -> endpoint https://breakline-xi.vercel.app/api/stripe-webhook with events:
+// Stripe -> Developers -> Webhooks -> endpoint https://www.breaklinefishing.com/api/stripe-webhook with events:
 //   checkout.session.completed, customer.subscription.created, customer.subscription.updated, customer.subscription.deleted
 import { env, json, stripe, saveSubscription, verifyStripe } from './_lib.js';
 
