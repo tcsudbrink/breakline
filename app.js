@@ -2624,7 +2624,7 @@ function openPicker(fam = PK.fam) {
 const THUMBS = new Map();   // thumbnails already fetched this session, so reopening the picker is instant
 // ---------- Prefetched charts (hourly GitHub Action -> live/*.png on the CDN) ----------
 // Where the hourly snapshots live: GitHub Pages in production, the local folder when testing
-const LIVE_BASE = /^(localhost|127\.)/.test(location.hostname) ? 'live/' : 'https://tsudbrinkdmw.github.io/breakline/live/';
+const LIVE_BASE = /^(localhost|127\.)/.test(location.hostname) ? 'live/' : 'https://tcsudbrink.github.io/breakline/live/';
 let PRE = null;
 async function loadManifest() {
   try { const r = await fetch(`${LIVE_BASE}manifest.json?t=${Math.floor(Date.now() / 600000)}`); if (r.ok) PRE = await r.json(); } catch (e) { /* none yet */ }
