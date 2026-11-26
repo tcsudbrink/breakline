@@ -172,10 +172,14 @@ const PRODUCTS = {
 };
 
 // ---------- State ----------
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const store = {
   get: (k, d) => { try { return JSON.parse(localStorage.getItem('breakline.' + k)) ?? d; } catch { return d; } },
-  set: (k, v) => localStorage.setItem('breakline.' + k, JSON.stringify(v)),
+  set: (k, v) => { localStorage.setItem('breakline.' + k, JSON.stringify(v)); if (SYNC_KEYS.includes(k)) ACCT_HOOK.settings?.(); },
 };
+// Settings saved to the signed-in account (everything else stays on this device)
+const SYNC_KEYS = ['home', 'grid', 'tdPair', 'tdOff', 'species', 'maxRun', 'fishDepth'];
+const ACCT_HOOK = {};
 const S = {
   prod: store.get('prod', 'sst'),
   date: null, hour: null,         // null = latest
@@ -188,10 +192,11 @@ const S = {
   grid: store.get('grid', 'll'), tdPair: store.get('tdPair', 'XY'), tdOff: store.get('tdOff', [0, 0]),
   brk: store.get('brk2', 0.3),   // °F per nm; MUR is smooth, so its strongest fronts run ~0.5-1
   home: store.get('home', 'Ocean City Inlet'),
-  wpts: store.get('wpts', []),
+  wpts: store.get('wpts', []).map((w) => (w.id ? w : { ...w, id: newId(), u: Date.parse(w.t) || Date.now() })),
   geo: { land: [], depth: [], iso: [], breaks: [], rings: [], td: [] },
 };
 if (!PRODUCTS[S.prod]) S.prod = 'sst';
+store.set('wpts', S.wpts); if (!store.get('wptsIds', null)) store.set('wptsIds', S.wpts.map((w) => w.id));   // pin the ids given to older spots
 S.fc = 0;   // forecast hours ahead of now (0 = now)
 S.wxMode = store.get('wxMode', 'wind'); S.wxH = 0;   // weather: wind or waves, hours ahead
 // the grid on screen: the temp-drift forecast when one is showing, otherwise the loaded data
@@ -3086,20 +3091,12 @@ const INFO = {
     const s = SPECIES[S.species];
     return P3(`Breakline's 0-100 rating of how fishy this spot looks for ${s ? s.label.toLowerCase() : 'the chosen species'}. It weighs temp breaks, color, bottom structure and eddies.`,
       v >= 70 ? 'High score: several good signs line up here.' : v >= 40 ? 'Medium score: a couple of good signs, but not everything lines up.' : 'Low score: little here for this species right now.',
-      'It is worked out by computer from satellite data. Treat it as a short list of places to check, not a promise.');
-  },
-  depth(fm, sp) {
-    const ft = fm * 6;
-    const zone = ft < 30 ? 'Shallow water: inshore and nearshore fish.' : fm < 20 ? 'Nearshore: bottom fish, kings, cobia and bait schools.' : fm < 60 ? 'Mid-shelf: reefs, ledges, kings, and mahi on weed lines.' : fm < 120 ? 'Near the shelf break: tuna, wahoo, mahi, billfish.' : 'Deep blue water past the shelf: tuna, billfish and swordfish.';
-    const dropFm = sp === sp ? sp / FATHOM : 0, drop = dropFm >= 3;
-    return P3('Water depth from NOAA charts and depth surveys.',
-      zone + (drop ? ` The bottom changes about ${Math.round(dropFm)} fathoms within half a mile: a drop-off or ledge.` : ''),
-      drop ? 'Steep bottom pushes current and bait up, so fish the edge of it.' : 'Look on the depth lines for the nearest edge, hump or canyon.');
+      `It is worked out by computer from satellite data. Treat it as a short list of places to check, not a promise.<br><b>Fishing for something else?</b> <a href="#" class="ppSpecies">Change the species in Where to fish</a> and the score updates.`);
   },
   cur(kt) {
     return P3('Surface current speed and the direction it is flowing toward.',
       kt > 1.5 ? `${kt.toFixed(1)} kt is strong current, likely the Gulf Stream or an eddy edge.` : kt > 0.5 ? `${kt.toFixed(1)} kt is moderate current.` : `${kt.toFixed(1)} kt is light current.`,
-      kt > 1.5 ? 'Expect a hard drift and long tag lines. Bottom fishing is tough; trolling the edge is good. Wind against this current stacks up steep seas.' : 'Easy drifts and bottom fishing. Fish tend to hold on the down-current side of structure.');
+      kt > 1.5 ? 'Expect a hard drift and long tag lines. Bottom fishing is tough; trolling the edge is good. Wind against this current stacks up steep seas.' : 'Easy drifts and bottom fishing. Pelagics usually hold on the up-current side of structure, where the current pushes bait up to them; bottom fish tuck into the slack water behind it.');
   },
   wind(kt) {
     return P3('The forecast model wind for right now at this spot: the direction it blows from, speed, and gusts.',
@@ -3114,15 +3111,12 @@ const INFO = {
   },
   spot(kind) {
     const k = { reef: 'An artificial or natural reef', pier: 'A fishing pier', jetty: 'A jetty or rock wall', rock: 'A rock pile or hard bottom', 'shoal/bar': 'A shoal or sandbar', inshore: 'A known inshore spot' }[kind] || 'A known fishing spot';
-    return P3(`${k} from public fishing-spot lists.`, 'Structure holds bait, and bait holds fish.', 'Expect other boats on popular spots. Fish the down-current side.');
+    return P3(`${k} from public fishing-spot lists.`, 'Structure holds bait, and bait holds fish.', 'Pelagics usually sit on the up-current side, where bait gets pushed up; bottom fish hold in the slack water down-current. Expect other boats on popular spots.');
   },
   wreck(kind) {
     return P3(`A charted ${kind.toLowerCase()} from NOAA.`, 'Hard structure on the bottom attracts bait and bottom fish.', 'Bottom fish, amberjack and cobia often hold here. Keep trolling gear clear of it.');
   },
   loran: P3('Loran-C time differences (TDs), the old navigation numbers many fishing spots are still written in.', 'Use them to match spots from old logbooks and spot lists.', 'The conversion is good to within a few hundred feet; double check on your sounder.'),
-  run(nm) {
-    return P3('Distance and true bearing from there to this spot.', `${nm.toFixed(1)} nm is about ${(nm / 25).toFixed(1)} h at 25 kt, or ${(nm / 18).toFixed(1)} h at 18 kt.`, 'Plan fuel for the round trip plus a reserve.');
-  },
 };
 
 // Readout
@@ -3137,7 +3131,7 @@ function readings(lat, lon) {
   add('Front strength', D.ftle, PRODUCTS.ftle.fmt, (v) => INFO.ftle(v));
   add('Salinity', D.sss, PRODUCTS.sss.fmt, (v) => INFO.sss(v));
   add('Hot-spot score', D.fish, PRODUCTS.fish.fmt, (v) => INFO.score(v));
-  const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z), z < 0 ? INFO.depth(-z / FATHOM, spread(D.bathy, lat, lon, 0.008)) : null]);
+  const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
   const c = curAt(lat, lon);
   if (c) { const kt = Math.hypot(c[0], c[1]) * 1.94384; r.push(['Current', `${kt.toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`, INFO.cur(kt)]); }
   for (const [d, b, sp] of spotsNear(lat, lon)) {
@@ -3149,8 +3143,8 @@ function readings(lat, lon) {
   }
   if (inLoran(lat, lon)) r.push([`Loran ${S.tdPair[0]}/${S.tdPair[1]}`, fmtTd(lat, lon), INFO.loran]);
   const home = PORTS.find((x) => x[0] === S.home);
-  if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`, INFO.run(d)]); }
-  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0]}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`, INFO.run(d)]); }
+  if (ME.pos) { const [d, b] = rangeBearing(ME.pos, [lat, lon]); r.push(['From you', `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
+  if (home) { const [d, b] = rangeBearing([home[1], home[2]], [lat, lon]); r.push([`From ${home[0]}`, `${d.toFixed(1)} nm @ ${Math.round(b)}°T`]); }
   return r;
 }
 
@@ -3273,6 +3267,12 @@ function openReading(latlng, title) {
     return [tr, note];
   };
   el.querySelector('table').append(...readings(lat, lng).flatMap(rowEls));
+  el.addEventListener('click', (e) => {
+    if (!e.target.closest('.ppSpecies')) return;
+    e.preventDefault(); map.closePopup(pop);
+    if (S.prod !== 'fish') document.querySelector('.prod[data-prod="fish"]').click();
+    setTimeout(() => { setFishCollapsed(false); $('species').focus(); try { $('species').showPicker?.(); } catch { /* needs a fresh tap on some browsers */ } }, 150);
+  });
   { // wind + seas right now, slotted in as rows once they arrive
     const tb = el.querySelector('table'), ld = document.createElement('tr');
     ld.innerHTML = '<td>Wind &amp; seas</td><td class="dim">loading…</td>'; tb.prepend(ld);
@@ -3293,7 +3293,7 @@ function openReading(latlng, title) {
   el.querySelector('.ppSave').onclick = () => {
     const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
     const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
-    S.wpts.push({ name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
+    S.wpts.push({ id: newId(), u: Date.now(), name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
       sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}` });
     saveWpts(); map.closePopup(pop);
   };
@@ -3341,7 +3341,17 @@ map.on('click', (e) => {
 
 // Waypoints
 const wLayer = L.layerGroup().addTo(map);
-function saveWpts() { store.set('wpts', S.wpts); drawWpts(); }
+function saveWpts(fromCloud) {
+  if (!fromCloud) {
+    const now = Date.now(), keep = new Set(S.wpts.map((w) => w.id)), gone = store.get('wptsGone', {});
+    for (const id of store.get('wptsIds', [])) if (!keep.has(id)) gone[id] = now;
+    for (const w of S.wpts) if (!w.id) { w.id = newId(); w.u = now; }
+    store.set('wptsGone', gone);
+  }
+  store.set('wptsIds', S.wpts.map((w) => w.id));
+  store.set('wpts', S.wpts); drawWpts();
+  if (!fromCloud) ACCT_HOOK.spots?.();
+}
 function drawWpts() {
   wLayer.clearLayers();
   const list = $('wList'); list.innerHTML = '';
@@ -3382,9 +3392,156 @@ if (store.get('perf', 0)) {
   drawChart = wrap('chart', drawChart); buildRings = wrap('rings', buildRings); autoRange = wrap('autorange', autoRange);
 }
 chart = new Chart().addTo(map);
+// ---------- Accounts (Supabase): spots + settings follow the user to every device ----------
+// The URL and publishable (anon) key are public by design; row-level security on every table keeps each
+// user to their own rows (see supabase/schema.sql). Empty = accounts switched off, app works as before.
+const SB_URL = '', SB_KEY = '';
+const ACCT = { sb: null, user: null, plan: 'free', busy: false, pushT: 0 };
+function sbLoad() {
+  if (ACCT.sb) return Promise.resolve(ACCT.sb);
+  return new Promise((ok, no) => {
+    const sc = document.createElement('script'); sc.src = 'vendor/supabase.js';
+    sc.onload = () => {
+      ACCT.sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'breakline.auth' } });
+      ACCT.sb.auth.onAuthStateChange((ev, sess) => {
+        const u = sess?.user || null, was = ACCT.user?.id;
+        ACCT.user = u; paintAcct();
+        if (u && u.id !== was) setTimeout(() => syncAll(true), 0);
+      });
+      ok(ACCT.sb);
+    };
+    sc.onerror = () => no(new Error('could not load the sign-in library'));
+    document.head.appendChild(sc);
+  });
+}
+const acctMsg = (t, bad) => { const m = $('acctMsg'); m.textContent = t || ''; m.classList.toggle('bad', !!bad); };
+function paintAcct() {
+  const on = !!ACCT.user;
+  $('acctOut').hidden = on; $('acctIn').hidden = !on;
+  if (on) {
+    $('acctWho').textContent = ACCT.user.email || 'your account';
+    $('acctPlan').textContent = ACCT.plan === 'pro' ? 'Pro' : 'Free';
+  }
+  $('btnWpts').classList.toggle('signed', on);
+}
+// Spots: last change wins per spot; deletes travel as deleted_at so they reach other devices
+async function syncSpots() {
+  const sb = ACCT.sb, uid = ACCT.user?.id; if (!sb || !uid) return;
+  const { data: rows, error } = await sb.from('spots').select('id,name,lat,lon,td,sst,fm,note,created_at,updated_at,deleted_at');
+  if (error) throw error;
+  const remote = new Map(rows.map((r) => [r.id, r])), gone = store.get('wptsGone', {}), local = new Map(S.wpts.map((w) => [w.id, w]));
+  const up = [], out = [];
+  for (const w of S.wpts) {
+    const r = remote.get(w.id), ru = r ? Date.parse(r.updated_at) : 0;
+    if (r && r.deleted_at && ru >= (w.u || 0)) continue;                      // deleted on another device
+    if (r && !r.deleted_at && ru > (w.u || 0)) { out.push({ ...w, name: r.name, lat: r.lat, lon: r.lon, td: r.td, sst: r.sst, fm: r.fm, note: r.note, u: ru }); continue; }
+    out.push(w);
+    if (!r || ru < (w.u || 0)) up.push({ id: w.id, name: w.name, lat: w.lat, lon: w.lon, td: w.td || null, sst: w.sst ?? null, fm: w.fm ?? null, note: w.note || null, created_at: w.t || new Date(w.u || Date.now()).toISOString(), updated_at: new Date(w.u || Date.now()).toISOString(), deleted_at: null });
+  }
+  for (const r of rows) {
+    if (local.has(r.id) || r.deleted_at) continue;
+    if (gone[r.id] && gone[r.id] >= Date.parse(r.updated_at)) { up.push({ ...r, deleted_at: new Date(gone[r.id]).toISOString(), updated_at: new Date(gone[r.id]).toISOString() }); continue; }
+    out.push({ id: r.id, name: r.name, lat: r.lat, lon: r.lon, td: r.td, sst: r.sst, fm: r.fm, note: r.note, t: r.created_at, u: Date.parse(r.updated_at) });
+  }
+  for (const [id, t] of Object.entries(gone)) {
+    const r = remote.get(id);
+    if (r && !r.deleted_at && t >= Date.parse(r.updated_at) && !up.some((x) => x.id === id)) up.push({ ...r, deleted_at: new Date(t).toISOString(), updated_at: new Date(t).toISOString() });
+  }
+  if (up.length) { const { error: e2 } = await sb.from('spots').upsert(up.map((x) => ({ ...x, user_id: uid }))); if (e2) throw e2; }
+  store.set('wptsGone', {});
+  out.sort((a, b) => (Date.parse(a.t) || a.u || 0) - (Date.parse(b.t) || b.u || 0));
+  S.wpts = out; saveWpts(true);
+}
+// Settings: whichever side changed last wins
+function applySettings(st) {
+  ACCT.applying = true;
+  try {
+    const fire = (el, ev = 'change') => el.dispatchEvent(new Event(ev));
+    if (st.grid && st.grid !== S.grid) { gm.value = st.grid; fire(gm); }
+    if (st.tdPair && st.tdPair !== S.tdPair) { tp.value = st.tdPair; fire(tp); }
+    if (Array.isArray(st.tdOff)) { $('tdOffA').value = st.tdOff[0] || ''; $('tdOffB').value = st.tdOff[1] || ''; fire($('tdOffA')); }
+    if (st.home && st.home !== S.home && PORTS.some((x) => x[0] === st.home)) { hp.value = st.home; fire(hp); }
+    if (st.maxRun && st.maxRun !== S.maxRun) { $('maxRun').value = st.maxRun; fire($('maxRun'), 'input'); fire($('maxRun')); }
+    if (Array.isArray(st.fishDepth)) { $('depMin').value = st.fishDepth[0] ?? ''; $('depMax').value = st.fishDepth[1] ?? ''; fire($('depMin')); }
+    if (st.species && st.species !== S.species && [...spSel.options].some((o) => o.value === st.species)) { spSel.value = st.species; fire(spSel); }
+  } finally { ACCT.applying = false; }
+}
+const localSettings = () => Object.fromEntries(SYNC_KEYS.map((k) => [k, store.get(k, null)]).filter(([, v]) => v != null));
+async function syncSettings(first) {
+  const sb = ACCT.sb, uid = ACCT.user?.id; if (!sb || !uid) return;
+  const { data: p, error } = await sb.from('profiles').select('settings,updated_at').eq('id', uid).maybeSingle();
+  if (error) throw error;
+  const lu = store.get('settingsU', 0), ru = p ? Date.parse(p.updated_at) : 0, has = p && Object.keys(p.settings || {}).length;
+  if (has && (first ? ru > lu || !lu : ru > lu)) { applySettings(p.settings); store.set('settingsU', ru); return; }
+  if (!has || lu > ru) {
+    const { error: e2 } = await sb.from('profiles').upsert({ id: uid, settings: localSettings(), updated_at: new Date(lu || Date.now()).toISOString() });
+    if (e2) throw e2;
+  }
+}
+async function syncPlan() {
+  const { data } = await ACCT.sb.from('subscriptions').select('plan,status,current_period_end').eq('user_id', ACCT.user.id).maybeSingle();
+  ACCT.plan = data && data.plan === 'pro' && ['active', 'trialing'].includes(data.status) ? 'pro' : 'free'; paintAcct();
+}
+async function syncAll(first) {
+  if (!ACCT.user || ACCT.busy) { ACCT.again = true; return; }
+  ACCT.busy = true; $('acctSync').textContent = 'Syncing…';
+  try {
+    await syncSettings(first); await syncSpots(); await syncPlan().catch(() => {});
+    $('acctSync').textContent = `Synced ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  } catch (e) {
+    $('acctSync').textContent = navigator.onLine ? 'Sync failed: will retry' : 'Offline: will sync when you reconnect';
+    console.warn('sync', e);
+  } finally {
+    ACCT.busy = false;
+    if (ACCT.again) { ACCT.again = false; setTimeout(() => syncAll(), 1500); }
+  }
+}
+const queueSync = () => { if (!ACCT.user) return; clearTimeout(ACCT.pushT); ACCT.pushT = setTimeout(() => syncAll(), 1200); };
+ACCT_HOOK.spots = queueSync;
+ACCT_HOOK.settings = () => { if (ACCT.applying) return; store.set('settingsU', Date.now()); queueSync(); };
+if (SB_URL && SB_KEY) {
+  $('acct').hidden = false;
+  // sign-in: email a 6-digit code (works inside the installed phone app, where a tapped email link opens the browser instead)
+  $('acctSend').onclick = async () => {
+    const email = $('acctEmail').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { acctMsg('Enter your email address.', true); return; }
+    $('acctSend').disabled = true; acctMsg('Sending…');
+    try {
+      const sb = await sbLoad(), { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
+      if (error) throw error;
+      ACCT.email = email; $('acctCodeRow').hidden = false; $('acctCode').focus();
+      acctMsg(`Check ${email} for a 6-digit code (or tap the link in that email on this device).`);
+    } catch (e) { acctMsg(/rate|seconds/i.test(e.message) ? 'Too many tries: wait a minute and send again.' : `Couldn't send the code: ${e.message}`, true); }
+    finally { $('acctSend').disabled = false; }
+  };
+  $('acctVerify').onclick = async () => {
+    const token = $('acctCode').value.replace(/\D/g, '');
+    if (token.length < 6) { acctMsg('Enter the code from the email.', true); return; }
+    $('acctVerify').disabled = true; acctMsg('Signing in…');
+    try {
+      const { error } = await ACCT.sb.auth.verifyOtp({ email: ACCT.email, token, type: 'email' });
+      if (error) throw error;
+      acctMsg(''); $('acctCodeRow').hidden = true; $('acctCode').value = '';
+    } catch (e) { acctMsg(/expired|invalid/i.test(e.message) ? 'That code is wrong or expired. Send a new one.' : e.message, true); }
+    finally { $('acctVerify').disabled = false; }
+  };
+  $('acctCode').onkeydown = (e) => { if (e.key === 'Enter') $('acctVerify').click(); };
+  $('acctEmail').onkeydown = (e) => { if (e.key === 'Enter') $('acctSend').click(); };
+  $('acctOutBtn').onclick = async () => {
+    if (!confirm('Sign out? Your spots stay on this device too.')) return;
+    await ACCT.sb.auth.signOut(); ACCT.plan = 'free'; paintAcct();
+  };
+  $('acctSyncNow').onclick = () => syncAll();
+  addEventListener('online', queueSync);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) queueSync(); });
+  // only load the sign-in library up front when there is a saved session (or a sign-in link just landed)
+  if (localStorage.getItem('breakline.auth') || /access_token|code=/.test(location.hash + location.search)) sbLoad().catch(() => {});
+  paintAcct();
+}
+
 drawWpts();
 refresh();
-window.__S = S; window.__map = map;
+window.__S = S; window.__map = map; window.__ACCT = ACCT;
 // inshore layers: NOAA chart + high-res bottom follow the view
 syncEnc();
 map.on('moveend', queueHiDem);

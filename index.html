@@ -102,6 +102,19 @@
 
 <!-- Waypoints drawer -->
 <section id="wpts" class="panel" hidden>
+  <div id="acct" hidden>
+    <h3>Account</h3>
+    <div id="acctOut">
+      <p class="hint">Sign in to keep your spots, home port and Loran or lat/long setting on every phone and computer you use.</p>
+      <div class="row acct-row"><input id="acctEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email address"><button id="acctSend">Email me a code</button></div>
+      <div id="acctCodeRow" class="row acct-row" hidden><input id="acctCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="6-digit code"><button id="acctVerify">Sign in</button></div>
+    </div>
+    <div id="acctIn" hidden>
+      <p class="acct-who">Signed in as <b id="acctWho"></b> · <span id="acctPlan">Free</span></p>
+      <div class="row"><span id="acctSync" class="hint">Synced</span><button id="acctSyncNow" class="ghost">Sync now</button><button id="acctOutBtn" class="ghost">Sign out</button></div>
+    </div>
+    <p id="acctMsg" class="hint"></p>
+  </div>
   <h3>Spots <span id="wCount"></span></h3>
   <p class="hint">Tap the chart to read the water and save a spot.</p>
   <ol id="wList"></ol>
