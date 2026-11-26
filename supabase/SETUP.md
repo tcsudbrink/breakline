@@ -1,6 +1,6 @@
 # Turning on Breakline accounts (Supabase)
 
-The app code is done. Accounts stay switched off until steps 1-5 are done and the project URL and key are in `app.js` (`SB_URL`, `SB_KEY`).
+The app code is done. Done 2026-11-26: project uydsbqqjuxhbhhujhsgd ("tcsudbrink's Project"), tables + RLS created, Site URL and redirects set, URL + publishable key in `app.js`. Templates need custom SMTP before they can be edited (step 3), so sign-in emails are link-only for now.
 
 ## 1. Create the project
 1. Sign up at https://supabase.com (the free plan is fine to start).

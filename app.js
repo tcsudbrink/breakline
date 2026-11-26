@@ -3395,7 +3395,7 @@ chart = new Chart().addTo(map);
 // ---------- Accounts (Supabase): spots + settings follow the user to every device ----------
 // The URL and publishable (anon) key are public by design; row-level security on every table keeps each
 // user to their own rows (see supabase/schema.sql). Empty = accounts switched off, app works as before.
-const SB_URL = '', SB_KEY = '';
+const SB_URL = 'https://uydsbqqjuxhbhhujhsgd.supabase.co', SB_KEY = 'sb_publishable_qQLZTM_1THgVTToQZAhiYA_IY5IEdL9';
 const ACCT = { sb: null, user: null, plan: 'free', busy: false, pushT: 0 };
 function sbLoad() {
   if (ACCT.sb) return Promise.resolve(ACCT.sb);
@@ -3510,7 +3510,7 @@ if (SB_URL && SB_KEY) {
       const sb = await sbLoad(), { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
       if (error) throw error;
       ACCT.email = email; $('acctCodeRow').hidden = false; $('acctCode').focus();
-      acctMsg(`Check ${email} for a 6-digit code (or tap the link in that email on this device).`);
+      acctMsg(`Check ${email} and tap the sign-in link on this device. If the email shows a code instead, type it here.`);
     } catch (e) { acctMsg(/rate|seconds/i.test(e.message) ? 'Too many tries: wait a minute and send again.' : `Couldn't send the code: ${e.message}`, true); }
     finally { $('acctSend').disabled = false; }
   };
