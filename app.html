@@ -21,8 +21,10 @@
     <h2 id="gTitle">Sign in</h2>
     <p id="gSub" class="gate-sub"></p>
     <form id="gForm" novalidate>
-      <input id="gEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email" required>
+      <input id="gName" type="text" autocomplete="name" placeholder="Your name" hidden>
+      <input id="gEmail" type="email autocomplete="email" inputmode="email" placeholder="Email" required>
       <input id="gPass" type="password" autocomplete="current-password" placeholder="Password">
+      <input id="gPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="Phone (optional)" hidden>
       <button id="gGo" type="submit">Sign in</button>
     </form>
     <p id="gMsg"></p>

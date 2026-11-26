@@ -91,3 +91,19 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function public.my_access() from public, anon;
 grant execute on function public.my_access() to authenticated;
+
+-- ---------- Who signed up: name + phone from the sign-up form (user_metadata), kept on profiles ----------
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists email text;
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, full_name, phone, email)
+  values (new.id, new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'phone', new.email)
+  on conflict (id) do update set full_name = coalesce(excluded.full_name, profiles.full_name),
+    phone = coalesce(excluded.phone, profiles.phone), email = excluded.email;
+  return new;
+end $$;
+-- backfill existing accounts
+insert into public.profiles (id, email) select id, email from auth.users on conflict (id) do update set email = excluded.email;

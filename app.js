@@ -3556,6 +3556,7 @@ function gateMode(m) {
     paywall: ['Your free trial has ended', `Keep every chart, every layer and your saved spots for ${PRICE_TXT}. Cancel any time.`, `Subscribe · ${PRICE_TXT}`, ''],
   }[m];
   $('gTitle').textContent = T[0]; $('gSub').textContent = T[1]; $('gGo').textContent = T[2];
+  $('gName').hidden = $('gPhone').hidden = m !== 'signup';
   $('gEmail').hidden = m === 'recovery' || m === 'paywall'; $('gPass').hidden = m === 'forgot' || m === 'paywall';
   $('gPayLinks').hidden = m !== 'paywall';
   $('gPass').autocomplete = T[3]; $('gPass').placeholder = m === 'signin' ? 'Password' : 'Password (8+ characters)';
@@ -3579,6 +3580,9 @@ async function gateSubmit(ev) {
   const sb = sbInit(), email = $('gEmail').value.trim(), password = $('gPass').value;
   if (!sb) { gMsg('Could not load sign-in. Reload the page.', true); return; }
   if (G.mode !== 'recovery' && !/^\S+@\S+\.\S+$/.test(email)) { gMsg('Enter your email address.', true); return; }
+  const fullName = $('gName').value.trim().replace(/\s+/g, ' '), phone = $('gPhone').value.trim();
+  if (G.mode === 'signup' && fullName.length < 2) { gMsg('Enter your name.', true); return; }
+  if (G.mode === 'signup' && phone && phone.replace(/\D/g, '').length < 10) { gMsg('Check the phone number, or leave it blank.', true); return; }
   if ((G.mode === 'signup' || G.mode === 'recovery') && password.length < 8) { gMsg('Use a password with at least 8 characters.', true); return; }
   $('gGo').disabled = true; gMsg('One moment…');
   const back = location.origin + '/app';
@@ -3586,7 +3590,7 @@ async function gateSubmit(ev) {
     if (G.mode === 'signin') {
       const { error } = await sb.auth.signInWithPassword({ email, password }); if (error) throw error; gMsg('');
     } else if (G.mode === 'signup') {
-      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back } }); if (error) throw error;
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back, data: { full_name: fullName, phone: phone || null } } }); if (error) throw error;
       if (data.session) gMsg('');
       else if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
         // Supabase answers a sign-up for an existing email with a fake success and sends nothing

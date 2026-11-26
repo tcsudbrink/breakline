@@ -16,6 +16,8 @@ export async function POST(request) {
       subscription_data: { metadata: { user_id: user.id } },
       metadata: { user_id: user.id },
       allow_promotion_codes: 'true',
+      billing_address_collection: 'required',
+      phone_number_collection: { enabled: 'true' },
       success_url: `${base}/app?paid=1`,
       cancel_url: `${base}/app`,
     });
