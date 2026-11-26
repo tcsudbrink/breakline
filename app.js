@@ -148,7 +148,7 @@ const PRODUCTS = {
     stops: ['#2a0a4a', '#3b1f9e', '#1d5fd6', '#14a6e0', '#1fd1b0', '#7ddc3a', '#f2e030', '#f8a22a', '#e9472a', '#b5122f', '#6e0a1e'],
   },
   ssh: {
-    name: 'Sea surface height', unit: 'cm', step: 1, res: 0.125, cells: 360, diverging: true, cm: 'sla',
+    name: 'Altimetry (sea height)', unit: 'cm', step: 1, res: 0.125, cells: 360, diverging: true, cm: 'sla',
     url: (w, t) => `/erddap/cw/griddap/noaacwBLENDEDsshDaily.asc?${q(`sla[(${t || 'last'})][${latRange(w, true)}][${lonRange(w)}]`)}`,
     v: 'sla', conv: (m) => (Math.abs(m) < 1.5 ? m * 100 : NaN), fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(0) + ' cm', day: (d) => `${d}T12:00:00Z`,
     stops: ['#1b2a8a', '#2f63c9', '#6fa8e6', '#c4def3', '#f2f2ee', '#f6c9a3', '#ea8a5a', '#cf4630', '#8c1520'],
@@ -3023,7 +3023,7 @@ function readings(lat, lon) {
   add('Water temp', D.sst, PRODUCTS.sst.fmt);
   add('Hourly temp', D.goes, PRODUCTS.goes.fmt);
   add('Chlorophyll', D.chl, PRODUCTS.chl.fmt);
-  add('Sea height', D.ssh, PRODUCTS.ssh.fmt);
+  add('Altimetry', D.ssh, (v) => `${PRODUCTS.ssh.fmt(v)} <small>${v > 0 ? 'above' : 'below'} normal</small>`);
   add('Mixed layer', D.mld, PRODUCTS.mld.fmt);
   add('Front strength', D.ftle, PRODUCTS.ftle.fmt);
   add('Salinity', D.sss, PRODUCTS.sss.fmt);
@@ -3125,6 +3125,26 @@ function onFix(p) {
 }
 map.on('dragstart', () => { if (ME.follow) { ME.follow = false; paintLocate(); } });
 
+// Conditions right now at a tapped point (Open-Meteo current values; cached 15 min per ~1 km cell)
+const NOWC = new Map();
+function nowConditions(lat, lon) {
+  const key = `${lat.toFixed(2)},${lon.toFixed(2)},${Math.floor(Date.now() / 900e3)}`;
+  if (NOWC.has(key)) return NOWC.get(key);
+  const qs = `latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&timezone=GMT`;
+  const p = Promise.all([
+    omJson(`https://api.open-meteo.com/v1/forecast?${qs}&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn`).catch(() => null),
+    omJson(`https://marine-api.open-meteo.com/v1/marine?${qs}&current=wave_height,wave_period,wave_direction`).catch(() => null),
+  ]).then(([w, m]) => {
+    const r = [], dirTxt = (d) => ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+    const c = w?.current, mc = m?.current;
+    if (c?.wind_speed_10m != null) r.push(['Wind now', `${dirTxt(c.wind_direction_10m)} ${Math.round(c.wind_speed_10m)} kt${c.wind_gusts_10m != null ? `, gusts ${Math.round(c.wind_gusts_10m)}` : ''}`]);
+    if (mc?.wave_height != null) r.push(['Seas now', `${(mc.wave_height * 3.28084).toFixed(1)} ft${mc.wave_period != null ? ` @ ${Math.round(mc.wave_period)} s` : ''}${mc.wave_direction != null ? ` from ${dirTxt(mc.wave_direction)}` : ''}`]);
+    if (!r.length) NOWC.delete(key);
+    return r;
+  });
+  NOWC.set(key, p);
+  return p;
+}
 function openReading(latlng, title) {
   const { lat, lng } = latlng;
   const rows = readings(lat, lng).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
@@ -3135,6 +3155,15 @@ function openReading(latlng, title) {
     <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
     <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
+  { // wind + seas right now, slotted in as rows once they arrive
+    const tb = el.querySelector('table'), ld = document.createElement('tr');
+    ld.innerHTML = '<td>Wind &amp; seas</td><td class="dim">loading…</td>'; tb.prepend(ld);
+    nowConditions(lat, lng).then((r) => {
+      if (!r.length) { ld.lastChild.textContent = 'unavailable right now'; return; }
+      ld.replaceWith(...r.map(([k, v]) => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${k}</td><td>${v}</td>`; return tr; }));
+      pop.update();
+    });
+  }
   const wb = el.querySelector('.ppwx');
   wb.onclick = async () => {
     wb.disabled = true; wb.textContent = 'Loading forecast…';
