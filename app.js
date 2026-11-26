@@ -3588,7 +3588,11 @@ async function gateSubmit(ev) {
     } else if (G.mode === 'signup') {
       const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back } }); if (error) throw error;
       if (data.session) gMsg('');
-      else { gateMode('signin'); $('gEmail').value = email; gMsg(`Almost there: we sent a confirmation link to <b>${email.replace(/</g, '&lt;')}</b>. Open it, then sign in here. (Check spam if it doesn't show up.)`); }
+      else if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
+        // Supabase answers a sign-up for an existing email with a fake success and sends nothing
+        gateMode('signin'); $('gEmail').value = email;
+        gMsg('That email already has a Breakline account. Sign in, or tap <b>Forgot password?</b> if you never set one.', true);
+      } else { gateMode('signin'); $('gEmail').value = email; gMsg(`Almost there: we sent a confirmation link to <b>${email.replace(/</g, '&lt;')}</b>. Open it, then sign in here. (Check spam if it doesn't show up.)`); }
     } else if (G.mode === 'forgot') {
       const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: back }); if (error) throw error;
       gMsg(`If ${email.replace(/</g, '&lt;')} has an account, a reset link is on its way.`);
