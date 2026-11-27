@@ -1201,7 +1201,8 @@ function drawLegend() {
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
   if (S.prod === 'cur' && S.data.curb?.model) when = niceHour(S.data.curb.time);
   const bk = g?.backup ? ' · <b title="NOAA is not answering right now, so this is the Breakline saved copy (checked every 10 minutes)">saved copy</b>' : '';
-  $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}${bk}</span>`;
+  $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}${LAYER_GUIDE[S.prod] ? ' <button class="lg-i" title="What am I looking at?" aria-label="About this layer">i</button>' : ''}</span><span>${when}${via}${bk}</span>`;
+  if (!$('layerInfo').hidden) guideSync();
   $('legend').classList.toggle('fixed', !!p.noLegendRange);
   if (!rng || !S.domain) { $('lgBar').style.background = `linear-gradient(90deg, ${p.stops.join(',')})`; return; }
   const a = domT(rng[0]) * 100, b = domT(rng[1]) * 100, n = p.stops.length - 1;
@@ -3184,6 +3185,11 @@ const INFO = {
       v > 0.3 ? 'A strong convergence line: water is being pulled together here.' : v > 0.15 ? 'A moderate convergence line.' : 'No strong convergence right here.',
       v > 0.15 ? 'Expect weed lines, debris, foam and bait collected along the line. Fish along it.' : 'Look for the bright lines on the Fronts chart nearby.');
   },
+  o2(v) {
+    return P3(`Dissolved oxygen${zlevTxt()}, estimated by the Copernicus ocean model.`,
+      v >= 5 ? 'Plenty of oxygen: tuna and billfish are comfortable here.' : v >= 3.5 ? 'Getting low: marlin, sailfish and yellowfin start to avoid water much below this.' : v >= 2 ? 'Low oxygen: most tuna and billfish stay above this layer. Bigeye and swordfish can still dip into it.' : 'Very low oxygen: few fish stay here for long.',
+      v < 3.5 ? 'If this water is shallow (under about 300 ft), fish are squeezed up toward the surface above it, which helps trolling and topwater.' : 'Fish can use this depth, so they may be spread out or deeper.');
+  },
   sss(v) {
     return P3('How salty the surface water is (PSU, about parts per thousand).',
       v >= 36 ? 'Very salty: typical of Gulf Stream and open subtropical water.' : v >= 34.5 ? 'Normal ocean water.' : v >= 32 ? 'A little fresher than open ocean: shelf water mixed with runoff.' : 'Fresh-influenced water from a river, sound or inlet outflow.',
@@ -3232,6 +3238,7 @@ function readings(lat, lon) {
   add('Mixed layer', D.mld, PRODUCTS.mld.fmt, (v) => INFO.mld(v));
   add('Front strength', D.ftle, PRODUCTS.ftle.fmt, (v) => INFO.ftle(v));
   add('Salinity', D.sss, PRODUCTS.sss.fmt, (v) => INFO.sss(v));
+  add('Oxygen', D.o2, PRODUCTS.o2.fmt, (v) => INFO.o2(v));
   add('Hot-spot score', D.fish, PRODUCTS.fish.fmt, (v) => INFO.score(v));
   const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
   const c = curAt(lat, lon);
@@ -3766,6 +3773,115 @@ window.__S = S; window.__map = map; window.__ACCT = ACCT;
 syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
+
+// ---------- Layer guide: the ⓘ next to the legend title explains the chart you're looking at ----------
+// what = what the colors are, good = what fishermen look for, watch = limits of the data.
+const LAYER_GUIDE = {
+  sst: {
+    what: 'Surface water temperature from satellites. Pick the source under the Water temp button: single passes are the sharpest but clouds leave holes; the blended and cloud-free products fill the holes by estimating, so they smooth out small breaks.',
+    good: ['Temperature breaks: places where the colors bunch up tight, meaning the water changes 1-2°F or more within a mile or two. Bait collects on them and predators patrol them.',
+      'Work the warm side of a break, and anywhere a break crosses structure (canyon heads, the 100 fathom curve, humps).',
+      'Match the water to the fish: open Where to fish and pick a species to see its sweet spot (yellowfin about 72-79°F, white marlin 71-78°F, mahi 74-82°F, bluefin 58-68°F).'],
+    watch: 'A pass is a snapshot of the very top skin of the water, and it can be a day or more old. Breaks move several miles a day in the Gulf Stream.',
+  },
+  goes: {
+    what: 'Surface temperature from the GOES-19 weather satellite, which sees the whole region every hour. Each pixel is the newest clear look from the last 24 hours, so you see a break moving through the day.',
+    good: ['The same breaks as Water temp, but fresher: use it to check where a break is this morning, not where it was yesterday.',
+      'Step through the hours to see which way a break or eddy edge is drifting, then set up ahead of it.'],
+    watch: 'It is coarser (about 2 km) than the polar passes, and it cannot see through clouds. Breakline keeps its own saved copy, built straight from NOAA\'s satellite files.',
+  },
+  chl: {
+    what: 'Chlorophyll is plankton, measured by the color of the water from space. It stands in for food and water clarity: purple and blue is clean, low-food blue water; green and yellow is plankton-rich; orange and red is dirty coastal or river water.',
+    good: ['Color edges: where blue water meets green within a mile or two. One of the most reliable signs offshore, and it often shows when the temperature does not.',
+      'For billfish, tuna and mahi, fish the blue side of the edge, roughly 0.1-0.3 mg/m³ ("blue-green" transition water).',
+      'Green water close to a clean edge holds the bait; very green water far from any edge is usually slow for pelagics.'],
+    watch: 'Clouds leave gaps. The gap-free products fill them by estimating, and NOAA\'s gap-free product can run weeks behind, so check the date in the legend.',
+  },
+  sss: {
+    what: 'How salty the water is, in PSU (about parts per thousand). Open ocean and the Gulf Stream run 35.5-36.5; shelf water 32-34; river and sound outflow lower. The surface reading is from NASA\'s SMAP satellite; the deeper levels (pick a depth under the button) are from the Copernicus ocean model.',
+    good: ['Salinity edges: a fast change in saltiness is a boundary between two water masses. It can show an edge when the surface temps have evened out, which happens a lot in summer.',
+      'Blue-water species (billfish, tuna, wahoo) are most comfortable in full ocean salinity, about 35 and up.',
+      'The edge of a river plume (the Mississippi, the Chesapeake, the Amazon water that reaches the Caribbean) gathers weed, bait and mahi. Fish the salty side.',
+      'At depth: salty water under the surface often marks where the Gulf Stream or an eddy really is, even when the surface has been mixed by wind.'],
+    watch: 'The satellite is coarse (about 25 km) and cannot read close to land, so it misses small inlet and sound outflows. Use it for the big picture, then fine-tune on temp and color.',
+  },
+  o2: {
+    what: 'Dissolved oxygen in the water, in mg/L, from the Copernicus ocean model (an estimate, not a measurement). Use the depth buttons to look below the surface: the surface is almost always well oxygenated, so the deeper levels are where this layer earns its keep.',
+    good: ['Tuna and billfish burn a lot of oxygen. Yellowfin, skipjack, marlin and sailfish mostly stay in water above about 3.5 mg/L; bigeye and swordfish can dive into much lower oxygen.',
+      'Where low-oxygen water comes up shallow (it shows as orange and red at 150-300 ft), the fish get squeezed into the top layer. That makes them easier to raise on the troll and on topwater. This is a big deal in the eastern Pacific (Costa Rica, Panama, Guatemala, Chiapas, Cabo).',
+      'Where oxygen stays high deep down (blue), fish can spread out and dive, so run some baits deeper.',
+      'Nearshore in the northern Gulf in summer, red near the bottom is the "dead zone": bottom fish move out of it.'],
+    watch: 'Off the U.S. East Coast and in the Caribbean the oxygen stays fine to well below fishing depths, so this layer changes little there. It is a model at about 15 nm detail, updated daily: use it for the big picture.',
+  },
+  mld: {
+    what: 'Mixed layer depth: how deep the warm, stirred-up surface layer goes before the water starts getting colder fast (the top of the thermocline). Light colors are shallow, dark colors are deep.',
+    good: ['Shallow (roughly under 100-150 ft): bait and predators are pinned in a thin warm layer near the surface. Good for trolling and topwater.',
+      'Deep (200 ft and more): fish have room to go deep, especially in midday sun. Run planers, downriggers or deep divers, or chunk and drop.',
+      'A sharp change in mixed layer depth marks the edge of an eddy or the Gulf Stream, even under clouds.'],
+    watch: 'From NOAA, about 9 km detail, daily. It has no reading over most of the continental shelf (inside about the 100 fathom line), and none for the Pacific zones.',
+  },
+  ftle: {
+    what: 'Fronts worked out by Breakline from the last several days of currents (the FSLE/FTLE method oceanographers use). The bright lines are where water coming from different directions is being pulled together and stretched into a line.',
+    good: ['Bright ridges are convergence lines: weed, debris, foam and bait get herded onto them. Troll along them.',
+      'Best of all where a bright ridge lines up with a temperature or color break: that front is real and being fed.',
+      'It comes from currents, not pictures, so it works under clouds when the temp and color charts are blank.'],
+    watch: 'Coarse (about 15 nm), so it tells you which area to run to. Find the exact edge on temp or color once you are there.',
+  },
+  ssh: {
+    what: 'Altimetry: the height of the sea surface measured by satellite radar, compared with normal. Red (+) is high water, usually a warm eddy or the Gulf Stream, spinning clockwise. Blue (-) is low water, usually a cold eddy spinning counterclockwise.',
+    good: ['The edges of eddies, where red meets blue or where colors bunch up, carry the fastest current and the best breaks.',
+      'Warm eddies (red) bring blue water and pelagics onto the shelf edge. Cold eddies (blue) pull up nutrients, turn green and hold bait around their rims.',
+      'It sees through clouds, so use it to find eddies when the temp chart is blank.'],
+    watch: 'Detail is about 15 km and it is a blend of several days, so it shows the big features, not small breaks.',
+  },
+  cur: {
+    what: 'Surface current speed (colors) and direction (arrows). Pick a source: HF radar and satellite (measured, best near the coast), or the HYCOM and RTOFS ocean models (they cover everywhere and forecast ahead).',
+    good: ['Current edges, where fast water meets slow water, line up with the breaks and hold bait.',
+      'Bait and pelagics stack on the up-current side of canyons, ledges, humps and wrecks, where current pushes water up.',
+      'Use the arrows to plan your drift and set your spread, and to see which way a break will move.'],
+    watch: 'The models can place the Gulf Stream edge several miles off. If HF radar covers your area, trust it over the models.',
+  },
+  wx: {
+    what: 'Wind or wave forecast from the GFS and wave models. Switch between Wind and Waves with the buttons, and use the time slider to look ahead.',
+    good: ['Pick your day and your run: watch the wind against the current (wind blowing into the Gulf Stream stands the seas up).',
+      'A steady wind for a couple of days lines up weed and pushes warm water onto the shelf.'],
+    watch: 'A forecast, not a report. Check NOAA marine forecasts before you go.',
+  },
+  fish: {
+    what: 'Breakline\'s 0-100 hot-spot score for the species you pick. It combines the temperature sweet spot, temp breaks, color, bottom structure, eddies, and your own logged catches if you have any.',
+    good: ['Bright yellow and orange are where several good signs line up. Use it as a short list of places to check.',
+      'Log your catches with Track my day: after three or more catches of a species, the score tunes itself to the water you actually caught them in.'],
+    watch: 'It is only as fresh as the satellite data under it, and clouds leave gaps. It is a guide, not a promise.',
+  },
+  ana: {
+    what: 'Ocean analysis: hourly temps where clear, with breaks, eddies and currents drawn on top, so you see the whole picture on one chart.',
+    good: ['Look for places where several things agree: a temp break, an eddy edge and current all in the same spot.'],
+    watch: 'Built from the other layers, so it has the same gaps and lags.',
+  },
+  bottom: {
+    what: 'The shape of the bottom, shaded so canyons, ledges and humps stand out, with depth in fathoms.',
+    good: ['Canyon heads, the 100 fathom curve, ledges and humps push current up and hold bait.',
+      'The best spots are where structure meets a temp or color break.'],
+    watch: 'Built from NOAA survey data. Check your sounder on the spot.',
+  },
+};
+function guideHtml(k) {
+  const p = PRODUCTS[k], g = LAYER_GUIDE[k]; if (!g) return '';
+  return `<div class="li-hd"><b>${p.name}</b><button class="ghost li-x" aria-label="Close">✕</button></div>`
+    + `<h4>What you're looking at</h4><p>${g.what}</p>`
+    + `<h4>What's best for fishing</h4><ul>${g.good.map((x) => `<li>${x}</li>`).join('')}</ul>`
+    + (g.watch ? `<h4>Keep in mind</h4><p>${g.watch}</p>` : '');
+}
+function guideShow(open) {
+  const el = $('layerInfo'), k = S.prod;
+  if (open === undefined) open = el.hidden;
+  if (!open || !LAYER_GUIDE[k]) { el.hidden = true; return; }
+  el.innerHTML = guideHtml(k); el.dataset.k = k + zlevTxt(); el.hidden = false; el.scrollTop = 0;
+}
+$('lgTitle').addEventListener('click', (ev) => { if (ev.target.closest('.lg-i')) { ev.stopPropagation(); guideShow(); } });
+$('layerInfo').addEventListener('click', (ev) => { if (ev.target.closest('.li-x')) guideShow(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('layerInfo').hidden) guideShow(false); });
+function guideSync() { const el = $('layerInfo'), key = S.prod + zlevTxt(); if (el.dataset.k !== key) guideShow(true); }
 
 // ---------- Water alerts: save the water you're in (or any Find your water search) and get told when it's back ----------
 // Alerts live in the account (water_alerts). After every saved-chart update the server re-runs each one

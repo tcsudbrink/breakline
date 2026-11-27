@@ -389,3 +389,19 @@ body.gated #rail, body.gated #topLeft, body.gated #datebar { visibility: hidden;
 .gate-foot { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; text-align: center; }
 #acctSubscribe { background: var(--accent) !important; color: #04121d !important; border: 0 !important; font-weight: 800; flex: 1; }
 #acctManage { flex: 1; }
+
+/* Layer guide (the i next to the legend title) */
+.lg-i { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 5px; padding: 0; border-radius: 50%; border: 1px solid var(--accent);
+  background: transparent; color: var(--accent); font: italic 700 11px/1 Georgia, serif; cursor: pointer; vertical-align: 1px; }
+.lg-i:hover { background: var(--accent); color: #04121d; }
+.layer-info { position: absolute; right: 10px; bottom: 96px; z-index: 1001; width: min(380px, calc(100vw - var(--rail) - 20px)); max-height: calc(100% - 170px);
+  overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(6px); padding: 10px 14px 12px;
+  font-size: 12.5px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+.layer-info[hidden] { display: none; }
+.layer-info .li-hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; color: #fff; }
+.layer-info .li-x { border: 0; color: var(--muted); font-size: 14px; padding: 2px 6px; cursor: pointer; }
+.layer-info h4 { margin: 10px 0 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.layer-info p { margin: 0; }
+.layer-info ul { margin: 0; padding-left: 17px; }
+.layer-info li { margin: 3px 0; }
+@media (max-width: 700px) { .layer-info { left: 8px; right: 8px; width: auto; bottom: 110px; max-height: 55vh; } }
