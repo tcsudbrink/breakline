@@ -13,3 +13,4 @@ goes.py
 archive.py
 watchdog.py
 build_overlays.py
+build_bathy.py

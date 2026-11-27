@@ -37,7 +37,22 @@ ZONES = {
     "puntacana": dict(s=16.5, n=21.0, w=-71.5, e=-66.0),
     "stlucia": dict(s=11.5, n=16.0, w=-63.0, e=-59.0),
     "pr": dict(s=16.5, n=20.0, w=-68.5, e=-63.5),      # Puerto Rico, USVI, BVI
+    # v52: Hawaii, Southern California, South & East Africa, Australia (keep in sync with build_bathy.py)
+    "haw": dict(s=17.5, n=23.5, w=-161.5, e=-153.5),
+    "cal": dict(s=29.5, n=35.0, w=-122.0, e=-116.0),
+    "zaf": dict(s=-36.5, n=-27.0, w=16.0, e=33.5),
+    "ken": dict(s=-11.0, n=-1.5, w=38.5, e=45.0),
+    "moz": dict(s=-27.0, n=-18.5, w=32.5, e=38.5),
+    "qld": dict(s=-28.5, n=-14.0, w=144.5, e=156.0),
+    "nsw": dict(s=-38.5, n=-28.0, w=148.5, e=155.5),
+    "vic": dict(s=-44.5, n=-37.0, w=137.0, e=150.5),
+    "wa": dict(s=-33.0, n=-20.0, w=111.0, e=116.5),
 }
+# Which GOES satellite sees each zone hourly (none: outside the Americas, no hourly SST)
+GOES_SAT = {z: 19 for z in ZONES}
+GOES_SAT.update(haw=18, cal=18)
+for z in ("zaf", "ken", "moz", "qld", "nsw", "vic", "wa"):
+    GOES_SAT.pop(z)
 CELL = 0.04                                           # ~4 km: plenty for overview + thumbnails
 # (GOES-19 hourly covers every zone; NOAA-21's US sector reaches 142W-52W, 0-60N, so it covers them too)
 HOSTS = {
@@ -68,7 +83,9 @@ SOURCES = {
 }
 LATEST = {"chl/dineof", "ssh/blend", "mld/ohc", "sss/smap", "cur/u", "cur/v"}
 LATEST_MAX_AGE_H = 3
-NOT_IN = {"mld/ohc": {"cr", "cabo"}}                   # NOAA's mixed-layer product stops short of the Pacific boxes
+_FAR = {"haw", "cal", "zaf", "ken", "moz", "qld", "nsw", "vic", "wa"}
+NOT_IN = {"mld/ohc": {"cr", "cabo"} | _FAR,          # NOAA's mixed-layer product is North Atlantic + Gulf only
+          "chl/n21": _FAR - {"cal"}}                 # NOAA-21's U.S. sector stops at 142W and the equator
 MODELS = ("hycom", "rtofs")                           # ocean-model currents, see models.py
 MODEL_MAX_AGE_H = 3
 DAYS = {"sst": 4, "chl": 7}
@@ -156,40 +173,46 @@ def age_h(e):
 
 
 def run_goes(items, now, deadline, per_run=30):
-    """Cut each missing hour of the last GOES_HOURS into every zone. Newest hours first; a slow run picks up the rest."""
+    """Cut each missing hour of the last GOES_HOURS into every zone that satellite sees. GOES-19 (East) first, then
+    GOES-18 (West: Hawaii, California). Newest hours first; a slow run picks up the rest."""
     import goes
-    changed, n = False, 0
-    for h in range(1, GOES_HOURS + 2):                   # the files land about an hour after the scan
-        hour = (now - dt.timedelta(hours=h)).replace(minute=0, second=0, microsecond=0)
-        hs = hour.strftime("%Y-%m-%dT%H:00:00Z")
-        ents = [items.get(f"{z}/goes/{hs}") for z in ZONES]
-        # done when every zone has it; an hour NOAA hadn't posted yet is asked again after 20 minutes
-        if all(e and (not e.get("none") or e.get("cloud") or age_h(e) < 0.33 or h > 8) for e in ents):
+    changed = False
+    for sat in (19, 18):
+        zs = {z: ZONES[z] for z, s in GOES_SAT.items() if s == sat}
+        if not zs:
             continue
-        if n >= per_run or time.time() > deadline:
-            print("GOES: more hours left for the next run", flush=True); break
-        n += 1
-        try:
-            key = goes.file_for(hour)
-            if not key:
-                for z in ZONES:
-                    if not (items.get(f"{z}/goes/{hs}") or {}).get("file"):
-                        items[f"{z}/goes/{hs}"] = {"none": True, "got": now_iso()}
-                changed = True; print("none", "goes", hs, flush=True); continue
-            sc = goes.Scene(key)
-            for z, box in ZONES.items():
-                lat, lon, v = sc.cut(box)
-                if not np.isfinite(v).any():
-                    items[f"{z}/goes/{hs}"] = {"none": True, "cloud": True, "got": now_iso()}; continue
-                fn = f"{z}_goes_{hs.replace(':', '').replace('-', '')}.png"
-                Image.fromarray(encode("sst", v), "L").save(os.path.join(OUT, fn), optimize=True)
-                items[f"{z}/goes/{hs}"] = {"file": fn, "enc": "sst", "time": sc.hour.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                           "lat0": round(float(lat[0]), 5), "dlat": round(float(lat[1] - lat[0]), 6),
-                                           "lon0": round(float(lon[0]), 5), "dlon": round(float(lon[1] - lon[0]), 6),
-                                           "nx": int(len(lon)), "ny": int(len(lat)), "got": now_iso()}
-            changed = True; print("OK  ", "goes", hs, flush=True)
-        except Exception as ex:  # noqa: BLE001
-            print("FAIL", "goes", hs, str(ex)[:100], flush=True)
+        n = 0
+        for h in range(1, GOES_HOURS + 2):                   # the files land about an hour after the scan
+            hour = (now - dt.timedelta(hours=h)).replace(minute=0, second=0, microsecond=0)
+            hs = hour.strftime("%Y-%m-%dT%H:00:00Z")
+            ents = [items.get(f"{z}/goes/{hs}") for z in zs]
+            # done when every zone has it; an hour NOAA hadn't posted yet is asked again after 20 minutes
+            if all(e and (not e.get("none") or e.get("cloud") or age_h(e) < 0.33 or h > 8) for e in ents):
+                continue
+            if n >= per_run or time.time() > deadline:
+                print(f"GOES-{sat}: more hours left for the next run", flush=True); break
+            n += 1
+            try:
+                key = goes.file_for(hour, sat)
+                if not key:
+                    for z in zs:
+                        if not (items.get(f"{z}/goes/{hs}") or {}).get("file"):
+                            items[f"{z}/goes/{hs}"] = {"none": True, "got": now_iso()}
+                    changed = True; print("none", f"goes{sat}", hs, flush=True); continue
+                sc = goes.Scene(key, sat)
+                for z, box in zs.items():
+                    lat, lon, v = sc.cut(box)
+                    if not np.isfinite(v).any():
+                        items[f"{z}/goes/{hs}"] = {"none": True, "cloud": True, "got": now_iso()}; continue
+                    fn = f"{z}_goes_{hs.replace(':', '').replace('-', '')}.png"
+                    Image.fromarray(encode("sst", v), "L").save(os.path.join(OUT, fn), optimize=True)
+                    items[f"{z}/goes/{hs}"] = {"file": fn, "enc": "sst", "time": sc.hour.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                               "lat0": round(float(lat[0]), 5), "dlat": round(float(lat[1] - lat[0]), 6),
+                                               "lon0": round(float(lon[0]), 5), "dlon": round(float(lon[1] - lon[0]), 6),
+                                               "nx": int(len(lon)), "ny": int(len(lat)), "got": now_iso()}
+                changed = True; print("OK  ", f"goes{sat}", hs, flush=True)
+            except Exception as ex:  # noqa: BLE001
+                print("FAIL", f"goes{sat}", hs, str(ex)[:100], flush=True)
     return changed
 
 

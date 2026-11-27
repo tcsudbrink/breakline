@@ -12,7 +12,8 @@ import urllib.request
 
 import numpy as np
 
-BUCKET = "https://noaa-goes19.s3.amazonaws.com"
+BUCKET = "https://noaa-goes19.s3.amazonaws.com"   # GOES-East; GOES-West (Hawaii, the eastern Pacific) is noaa-goes18
+bucket = lambda sat=19: f"https://noaa-goes{sat}.s3.amazonaws.com"  # noqa: E731
 UA = {"User-Agent": "Breakline-prefetch/1.0"}
 CELL = 0.04
 
@@ -22,17 +23,17 @@ def _get(url, timeout=120):
         return r.read()
 
 
-def file_for(hour):
+def file_for(hour, sat=19):
     """S3 key of the full-disk SST file whose scan starts in this UTC hour, or None."""
-    lst = _get(f"{BUCKET}/?list-type=2&prefix=ABI-L2-SSTF/{hour:%Y}/{hour:%j}/{hour:%H}/", 60).decode()
+    lst = _get(f"{bucket(sat)}/?list-type=2&prefix=ABI-L2-SSTF/{hour:%Y}/{hour:%j}/{hour:%H}/", 60).decode()
     keys = re.findall(r"<Key>([^<]+\.nc)</Key>", lst)
     return keys[0] if keys else None
 
 
 class Scene:
-    def __init__(self, key):
+    def __init__(self, key, sat=19):
         import h5py
-        self.f = h5py.File(io.BytesIO(_get(f"{BUCKET}/{key}", 300)), "r")
+        self.f = h5py.File(io.BytesIO(_get(f"{bucket(sat)}/{key}", 300)), "r")
         p = self.f["goes_imager_projection"].attrs
         g = lambda k: float(np.ravel(p[k])[0])  # noqa: E731
         self.req, self.rpol = g("semi_major_axis"), g("semi_minor_axis")

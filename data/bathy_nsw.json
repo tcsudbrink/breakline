@@ -1,0 +1,1 @@
+{"nx": 210, "ny": 315, "lat0": -38.483333333333334, "lon0": 148.51666666666668, "dlat": 0.03333333333333333, "dlon": 0.03333333333333333, "src": "NOAA NCEI DEM global mosaic (ETOPO 2022 + coastal DEMs), 2 arc-min", "format": "int16 LE meters, rows south->north"}

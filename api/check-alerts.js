@@ -10,7 +10,7 @@ const LIVE = 'https://tcsudbrink.github.io/breakline/live/';
 const SITE = 'https://www.breaklinefishing.com';
 const CELL = 0.04, FATHOM = 1.8288;
 const BRK = { hourly: { on: 0.27, strong: 0.4, off: 0.1 }, blend: { on: 0.15, strong: 0.21, off: 0.06 } };
-const BATHY = ['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia'];
+const BATHY = ['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia', 'haw', 'cal', 'zaf', 'ken', 'moz', 'qld', 'nsw', 'vic', 'wa'];
 
 // ---- 8-bit grayscale PNG (what prefetch.py writes) ----
 function decodePng(buf) {

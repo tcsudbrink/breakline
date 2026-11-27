@@ -8,7 +8,7 @@
 'use strict';
 
 // ---------- Config ----------
-const WORLD = { s: -5, n: 50, w: -120, e: -50 };   // Gulf of Maine to the Caribbean + Gulf of Mexico + Pacific Central America
+const WORLD = { s: -50, n: 60, w: -180, e: 180 };   // the whole fishing world (data windows still follow the screen)
 // Fishing zones: quick-jump views, a default home port, and the boxes the hourly prefetch covers (keep in sync with prefetch.py)
 const ZONES = {
   ne: { label: 'Northeast canyons', view: [[39.0, -74.5], [41.6, -68.5]], home: 'Montauk', box: 'east' },
@@ -31,13 +31,35 @@ const ZONES = {
   cancun: { label: 'Cancún, Isla Mujeres, Cozumel', view: [[19.9, -87.6], [22.3, -85.4]], home: 'Isla Mujeres', box: 'cancun' },
   puntacana: { label: 'Punta Cana / Cap Cana (DR)', view: [[17.5, -69.8], [19.4, -67.4]], home: 'Cap Cana', box: 'puntacana' },
   stlucia: { label: 'St. Lucia', view: [[13.3, -61.6], [14.5, -60.4]], home: 'Rodney Bay', box: 'stlucia' },
+  haw: { label: 'Hawaii: Kona, Oahu, Maui, Kauai', view: [[18.5, -160.5], [22.6, -154.5]], home: 'Kona (Honokohau Harbor)', box: 'haw' },
+  cal: { label: 'Southern California & northern Baja', view: [[31.4, -121.0], [34.6, -116.8]], home: 'San Diego (Point Loma)', box: 'cal' },
+  zaf: { label: 'South Africa: Cape Point, Struisbaai, KZN', view: [[-35.6, 17.0], [-28.0, 33.0]], home: 'Cape Town (V&A Waterfront)', box: 'zaf' },
+  ken: { label: 'Kenya & Tanzania: Watamu, Malindi, Pemba', view: [[-7.5, 38.8], [-2.2, 41.8]], home: 'Watamu', box: 'ken' },
+  moz: { label: 'Mozambique: Bazaruto, Tofo, Ponta do Ouro', view: [[-27.0, 32.6], [-20.5, 36.5]], home: 'Vilanculos', box: 'moz' },
+  qld: { label: 'Queensland: Cairns, Lizard Island, Gold Coast', view: [[-19.5, 144.8], [-14.2, 148.5]], home: 'Cairns', box: 'qld' },
+  nsw: { label: 'New South Wales: Port Stephens, Sydney, Bermagui', view: [[-37.8, 149.2], [-31.8, 154.5]], home: 'Port Stephens', box: 'nsw' },
+  vic: { label: 'Victoria, Tasmania & SA: southern bluefin', view: [[-44.0, 140.0], [-37.6, 149.8]], home: 'Portland (Victoria)', box: 'vic' },
+  wa: { label: 'Western Australia: Exmouth, Ningaloo, Perth', view: [[-24.0, 111.8], [-20.6, 115.0]], home: 'Exmouth', box: 'wa' },
 };
 const PRE_BOX = {
   east: { s: 23.0, n: 46.0, w: -98.0, e: -60.0 }, fl: { s: 20.0, n: 28.5, w: -85.0, e: -72.0 }, cr: { s: -1.0, n: 13.0, w: -96.0, e: -78.0 },
   cabo: { s: 21.0, n: 27.5, w: -117.0, e: -106.5 }, chiapas: { s: 11.5, n: 17.5, w: -98.0, e: -90.0 }, cancun: { s: 18.5, n: 23.5, w: -89.0, e: -84.0 },
   puntacana: { s: 16.5, n: 21.0, w: -71.5, e: -66.0 }, stlucia: { s: 11.5, n: 16.0, w: -63.0, e: -59.0 },
   pr: { s: 16.5, n: 20.0, w: -68.5, e: -63.5 },
+  haw: { s: 17.5, n: 23.5, w: -161.5, e: -153.5 },
+  cal: { s: 29.5, n: 35.0, w: -122.0, e: -116.0 },
+  zaf: { s: -36.5, n: -27.0, w: 16.0, e: 33.5 },
+  ken: { s: -11.0, n: -1.5, w: 38.5, e: 45.0 },
+  moz: { s: -27.0, n: -18.5, w: 32.5, e: 38.5 },
+  qld: { s: -28.5, n: -14.0, w: 144.5, e: 156.0 },
+  nsw: { s: -38.5, n: -28.0, w: 148.5, e: 155.5 },
+  vic: { s: -44.5, n: -37.0, w: 137.0, e: 150.5 },
+  wa: { s: -33.0, n: -20.0, w: 111.0, e: 116.5 },
 };
+// Boxes the hourly satellite can't see (GOES-19/18 only cover the Americas): hourly temps aren't offered there
+const NO_HOURLY = new Set(['zaf', 'ken', 'moz', 'qld', 'nsw', 'vic', 'wa']);
+// older areas share big saved boxes (east, fl...), so their home-port lists group by the Jump-to view; new areas by their own box
+const NO_JUMPVIEW_GROUP = new Set(['ng', 'ne', 'ma', 'se', 'fl', 'flg', 'gulf', 'tx', 'bda', 'tci', 'pr', 'puntacana', 'stlucia', 'cancun', 'cabo', 'chiapas', 'guat', 'cr', 'crs', 'pan']);
 const FATHOM = 1.8288;
 const DEPTHS_MAJOR = [50, 100, 500, 1000];
 const DEPTHS_MINOR = [10, 20, 30, 40, 200, 300, 1500, 2000];
@@ -72,6 +94,8 @@ const PORTS = [
   ['Isla Mujeres', 21.250, -86.740], ['Cancún (Puerto Juárez)', 21.180, -86.800], ['Cozumel', 20.510, -86.950], ['Puerto Aventuras', 20.500, -87.230],
   ['Cap Cana', 18.430, -68.400], ['Punta Cana (Marina)', 18.500, -68.370],
   ['Rodney Bay', 14.080, -60.950], ['Marigot Bay', 13.970, -61.030], ['Vieux Fort', 13.730, -60.950],
+  // Hawaii, Southern California, South & East Africa, Australia (v52)
+  ['Honolulu (Kewalo Basin)', 21.290, -157.860], ['Waianae (Oahu)', 21.440, -158.190], ['Kona (Honokohau Harbor)', 19.670, -156.030], ['Lahaina (Maui)', 20.870, -156.680], ['Nawiliwili (Kauai)', 21.955, -159.350], ['San Diego (Point Loma)', 32.720, -117.235], ['Mission Bay', 32.760, -117.240], ['Oceanside', 33.205, -117.395], ['Dana Point', 33.460, -117.700], ['Newport Beach', 33.595, -117.880], ['Long Beach', 33.720, -118.180], ['Redondo Beach', 33.840, -118.400], ['Marina del Rey', 33.965, -118.460], ['Channel Islands Harbor (Oxnard)', 34.160, -119.225], ['Santa Barbara', 34.405, -119.690], ['Ensenada', 31.850, -116.630], ['Cape Town (V&A Waterfront)', -33.905, 18.420], ['Hout Bay', -34.050, 18.350], ["Simon's Town", -34.190, 18.435], ['Struisbaai', -34.810, 20.060], ['Mossel Bay', -34.180, 22.145], ['Gqeberha (Port Elizabeth)', -33.960, 25.630], ['Durban', -29.870, 31.030], ['Richards Bay', -28.800, 32.090], ['Sodwana Bay', -27.540, 32.680], ['Watamu', -3.360, 40.020], ['Malindi', -3.220, 40.120], ['Mombasa', -4.060, 39.680], ['Shimoni', -4.650, 39.380], ['Pemba Island', -5.060, 39.720], ['Zanzibar', -6.160, 39.190], ['Dar es Salaam', -6.820, 39.300], ['Vilanculos', -22.000, 35.320], ['Bazaruto', -21.600, 35.450], ['Tofo (Inhambane)', -23.850, 35.550], ['Maputo', -25.970, 32.570], ['Ponta do Ouro', -26.850, 32.900], ['Lizard Island', -14.670, 145.460], ['Port Douglas', -16.480, 145.465], ['Cairns', -16.920, 145.780], ['Townsville', -19.250, 146.820], ['Mooloolaba', -26.680, 153.120], ['Brisbane (Scarborough)', -27.200, 153.100], ['Gold Coast Seaway', -27.940, 153.430], ['Coffs Harbour', -30.300, 153.150], ['Port Macquarie', -31.430, 152.920], ['Port Stephens', -32.720, 152.100], ['Sydney (Rose Bay)', -33.870, 151.260], ['Wollongong', -34.420, 150.900], ['Ulladulla', -35.360, 150.475], ['Bermagui', -36.420, 150.070], ['Eden', -37.070, 149.910], ['Portland (Victoria)', -38.345, 141.610], ['Port Fairy', -38.390, 142.240], ['San Remo', -38.520, 145.370], ['St Helens (Tasmania)', -41.320, 148.280], ['Eaglehawk Neck (Tasmania)', -43.020, 147.930], ['Hobart', -42.880, 147.330], ['Exmouth', -21.955, 114.140], ['Coral Bay', -23.140, 113.770], ['Geraldton', -28.780, 114.610], ['Hillarys (Perth)', -31.820, 115.735], ['Fremantle', -32.060, 115.740],
 ];
 
 const q = (s) => encodeURIComponent(s);
@@ -1501,6 +1525,7 @@ async function loadGridLive(prod) {
   try { const pg = await preForView(prod); if (pg) return pg; } catch (e) { console.warn('prefetch', e); }
   if (prod === 'goes') {
     const old = goesHours()[0];
+    { const z = preZoneAt(map.getCenter()); if (z && NO_HOURLY.has(z)) throw new Error('no hourly satellite temps here (the U.S. GOES satellites only see the Americas); use Temp'); }
     throw new Error(S.hour && old && S.hour < old ? `no hourly temps saved for that hour (the archive starts ${ARCH_START}); use daily Temp` : 'no hourly temps saved for this area');
   }
   if (p.family && curSrc(p.family).comp) { const g = await loadComposite(p.family, curSrc(p.family).comp, win, null); g.src = S.src[p.family]; return g; }
@@ -1623,7 +1648,7 @@ async function loadComposite(fam, days, win, zone) {
   } else {
     const jobs = [], res = SRC[fam][`comp${days}`].res;
     const sw = (r) => ({ ...win, stride: Math.max(1, Math.round(win.stride * res / r)) });
-    if (fam === 'sst') for (let k = 0; k < 4 * days; k++) jobs.push(getText(PRODUCTS.goes.url(sw(0.02), end, k)).then((t) => toGrid(parseAsc(t), 'sst', SST_C, true)));
+    // (no live GOES here: NOAA retired the hourly ERDDAP feed in Nov 2026; hourly comes only from the saved zones above)
     const tq = end ? `(${addDays(S.date, 1 - days)}T00:00:00Z):1:(${end})` : days > 1 ? `last-${days - 1}:1:last` : 'last';
     // polar passes live on coastwatch.noaa.gov, which is often slow or down: give them 15 s, then stack what we have
     const cap = (pr) => Promise.race([pr, new Promise((_, no) => setTimeout(() => no(new Error('polar passes timed out')), 15000))]);
@@ -1649,11 +1674,19 @@ async function loadComposite(fam, days, win, zone) {
 // zoomed in (or outside it), fetch full-resolution ETOPO for the view.
 // One file per zone: East Coast + Gulf, Florida/Bahamas, Pacific Costa Rica
 const BATHY2 = [];
-const bathy2Ready = Promise.all(['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia'].map((n) => Promise.all([fetch(`data/bathy_${n}.json`).then((r) => r.json()), fetch(`data/bathy_${n}.bin`).then((r) => r.arrayBuffer())])
+const bathy2Ready = Promise.all(['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia', 'haw', 'cal', 'zaf', 'ken', 'moz', 'qld', 'nsw', 'vic', 'wa'].map((n) => Promise.all([fetch(`data/bathy_${n}.json`).then((r) => r.json()), fetch(`data/bathy_${n}.bin`).then((r) => r.arrayBuffer())])
   .then(([m, b]) => { BATHY2.push({ ...m, z: new Int16Array(b) }); }).catch((e) => console.warn('static bathy', n, e))));
 function bathyFromStatic(win) {
-  const B = BATHY2.find((b) => win.s >= b.lat0 && win.w >= b.lon0 && win.n <= b.lat0 + (b.ny - 1) * b.dlat && win.e <= b.lon0 + (b.nx - 1) * b.dlon);
-  if (!B) return null;
+  const top = (b) => b.lat0 + (b.ny - 1) * b.dlat, right = (b) => b.lon0 + (b.nx - 1) * b.dlon;
+  let B = BATHY2.find((b) => win.s >= b.lat0 && win.w >= b.lon0 && win.n <= top(b) && win.e <= right(b));
+  if (!B) {
+    // a view that spills past a depth file's edge (open ocean or land beyond it): use the file covering most of it
+    const ov = (b) => Math.max(0, Math.min(win.n, top(b)) - Math.max(win.s, b.lat0)) * Math.max(0, Math.min(win.e, right(b)) - Math.max(win.w, b.lon0));
+    const area = (win.n - win.s) * (win.e - win.w), best = BATHY2.map((b) => [b, ov(b)]).sort((x, y) => y[1] - x[1])[0];
+    if (!best || best[1] < 0.4 * area) return null;
+    B = best[0];
+    win = { ...win, s: Math.max(win.s, B.lat0), n: Math.min(win.n, top(B)), w: Math.max(win.w, B.lon0), e: Math.min(win.e, right(B)) };
+  }
   const st = Math.max(1, Math.round((win.n - win.s) / B.dlat / 620) || 1);
   const j0 = Math.floor((win.s - B.lat0) / B.dlat), j1 = Math.ceil((win.n - B.lat0) / B.dlat);
   const i0 = Math.floor((win.w - B.lon0) / B.dlon), i1 = Math.ceil((win.e - B.lon0) / B.dlon);
@@ -1823,18 +1856,24 @@ const SPECIES = {
   yellowfin: { label: 'Yellowfin tuna', ocean: 'both', t: [68, 72, 79, 84], fm: 40, w: { brk: 0.35, chl: 0.2, bot: 0.25, eddy: 0.2 } },
   bigeye: { label: 'Bigeye tuna', ocean: 'both', t: [63, 66, 75, 80], fm: 100, w: { brk: 0.3, chl: 0.1, bot: 0.4, eddy: 0.2 } },
   bluefin: { label: 'Bluefin tuna', ocean: 'atl', t: [52, 58, 68, 74], fm: 15, w: { brk: 0.35, chl: 0.3, bot: 0.2, eddy: 0.15 } },
-  mahi: { label: 'Mahi', ocean: 'atl', t: [70, 74, 82, 86], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
+  mahi: { label: 'Mahi', ocean: ['atl', 'haw', 'aus', 'ind'], t: [70, 74, 82, 86], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
   white: { label: 'White marlin', ocean: 'atl', t: [68, 71, 78, 83], fm: 40, w: { brk: 0.35, chl: 0.25, bot: 0.25, eddy: 0.15 } },
   blue: { label: 'Blue marlin', ocean: 'atl', t: [72, 75, 84, 88], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
   sailA: { label: 'Sailfish', ocean: 'atl', t: [72, 75, 82, 86], fm: 15, w: { brk: 0.4, chl: 0.25, bot: 0.25, eddy: 0.1 } },
   blackfin: { label: 'Blackfin tuna', ocean: 'atl', t: [68, 72, 80, 84], fm: 20, w: { brk: 0.35, chl: 0.2, bot: 0.35, eddy: 0.1 } },
   wahoo: { label: 'Wahoo', ocean: 'both', t: [70, 73, 80, 85], fm: 30, w: { brk: 0.35, chl: 0.15, bot: 0.35, eddy: 0.15 } },
   // Eastern Pacific (Cabo, Mexico Pacific, Central America)
-  dorado: { label: 'Dorado', ocean: 'pac', t: [72, 76, 84, 88], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
-  striped: { label: 'Striped marlin', ocean: 'pac', t: [66, 69, 77, 81], fm: 50, w: { brk: 0.4, chl: 0.25, bot: 0.25, eddy: 0.1 } },
-  blueP: { label: 'Blue marlin', ocean: 'pac', t: [76, 79, 86, 90], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
-  black: { label: 'Black marlin', ocean: 'pac', t: [75, 78, 85, 89], fm: 30, w: { brk: 0.3, chl: 0.2, bot: 0.4, eddy: 0.1 } },
-  sailP: { label: 'Sailfish', ocean: 'pac', t: [77, 80, 86, 90], fm: 20, w: { brk: 0.4, chl: 0.3, bot: 0.2, eddy: 0.1 } },
+  dorado: { label: 'Dorado', ocean: ['pac', 'cal'], t: [72, 76, 84, 88], fm: 20, w: { brk: 0.45, chl: 0.2, bot: 0.1, eddy: 0.25 } },
+  striped: { label: 'Striped marlin', ocean: ['pac', 'cal', 'haw', 'aus', 'ind'], t: [66, 69, 77, 81], fm: 50, w: { brk: 0.4, chl: 0.25, bot: 0.25, eddy: 0.1 } },
+  blueP: { label: 'Blue marlin', ocean: ['pac', 'haw', 'aus', 'ind'], t: [76, 79, 86, 90], fm: 100, w: { brk: 0.35, chl: 0.1, bot: 0.25, eddy: 0.3 } },
+  black: { label: 'Black marlin', ocean: ['pac', 'aus', 'ind'], t: [75, 78, 85, 89], fm: 30, w: { brk: 0.3, chl: 0.2, bot: 0.4, eddy: 0.1 } },
+  sailP: { label: 'Sailfish', ocean: ['pac', 'aus', 'ind'], t: [77, 80, 86, 90], fm: 20, w: { brk: 0.4, chl: 0.3, bot: 0.2, eddy: 0.1 } },
+  // Hawaii, California, Australia, Africa (v52)
+  spear: { label: 'Shortbill spearfish', ocean: ['haw'], t: [72, 75, 82, 86], fm: 100, w: { brk: 0.35, chl: 0.15, bot: 0.3, eddy: 0.2 } },
+  bluefinP: { label: 'Pacific bluefin', ocean: ['cal'], t: [59, 62, 68, 72], fm: 40, w: { brk: 0.35, chl: 0.3, bot: 0.2, eddy: 0.15 } },
+  yellowtail: { label: 'Yellowtail (kingfish)', ocean: ['cal', 'aus'], t: [59, 63, 70, 74], fm: 15, w: { brk: 0.25, chl: 0.25, bot: 0.45, eddy: 0.05 } },
+  albacore: { label: 'Albacore', ocean: ['cal', 'haw', 'aus', 'ind'], t: [58, 61, 66, 70], fm: 100, w: { brk: 0.45, chl: 0.25, bot: 0.1, eddy: 0.2 } },
+  sbt: { label: 'Southern bluefin', ocean: ['aus'], t: [55, 59, 66, 70], fm: 40, w: { brk: 0.35, chl: 0.3, bot: 0.25, eddy: 0.1 } },
   // Inshore (sounds, bays, inlets, beaches). ft = depth window; like = how much each kind of structure matters.
   // region: fl = Florida only, north = Outer Banks and north, south = Chesapeake and south
   flounder: { label: 'Flounder', ocean: 'atl', inshore: true, t: [50, 58, 76, 84], ft: [4, 45], like: { drop: 1, inlet: 0.9, reef: 0.85, shoal: 0.7, bridge: 0.65, pier: 0.6, jetty: 0.65, rock: 0.55 } },
@@ -1848,6 +1887,10 @@ for (const v of Object.values(SPECIES)) if (v.inshore) { v.fm = 0; v.w = { brk: 
 const REGION_OK = { fl: (la, lo) => la < 30.8 && lo > -87.7, north: (la) => la > 34.5, south: (la) => la < 39.8 };
 // Which ocean a point is in. The Central American isthmus divide, roughly, from Mexico to Panama.
 function oceanAt(lat, lon) {
+  if (lon > 100) return 'aus';                      // Australia (east, south and west coasts)
+  if (lon > 0) return 'ind';                        // Southern and East Africa
+  if (lon < -150) return 'haw';                     // Hawaii
+  if (lat > 28.5 && lon < -115.3) return 'cal';     // Southern California and the Pacific side of northern Baja
   if (lon < -98) return 'pac';
   if (lat < 16.2 && lon < -90.5) return 'pac';     // Chiapas, Guatemala
   if (lat < 13.5 && lon < -87.5) return 'pac';     // El Salvador, Gulf of Fonseca, Nicaragua
@@ -1858,7 +1901,7 @@ function oceanAt(lat, lon) {
   return 'atl';
 }
 function speciesFor(ocean, la, lo) {
-  return Object.entries(SPECIES).filter(([, v]) => (v.ocean === ocean || v.ocean === 'both') && (!v.region || la == null || REGION_OK[v.region](la, lo)));
+  return Object.entries(SPECIES).filter(([, v]) => (v.ocean === ocean || v.ocean === 'both' || (Array.isArray(v.ocean) && v.ocean.includes(ocean))) && (!v.region || la == null || REGION_OK[v.region](la, lo)));
 }
 function tempFit(t, [a, b, c, d]) { return t < a || t > d ? 0 : t < b ? (t - a) / (b - a) : t > c ? (d - t) / (d - c) : 1; }
 function pctNorm(arr, p = 0.95) { const v = Array.from(arr).filter((x) => x === x && x > 0).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length * p)] || 1 : 1; }
@@ -2977,7 +3020,7 @@ async function loadThumb(it, vkey) {
     if (THUMBS.has(key)) it.g = THUMBS.get(key);
     else if (pe && pe.none) { it.el.querySelector('em').textContent = pe.cloud ? 'all cloud' : 'no pass that day'; it.el.classList.add('none'); return; }
     else if (pe) it.g = await preGrid(pe, conv);
-    else if (it.fam === 'goes') { it.el.querySelector('em').textContent = zone ? 'not saved yet' : 'outside the hourly areas'; it.el.classList.add('none'); return; }
+    else if (it.fam === 'goes') { it.el.querySelector('em').textContent = zone && NO_HOURLY.has(zone) ? 'no hourly satellite here' : zone ? 'not saved yet' : 'outside the hourly areas'; it.el.classList.add('none'); return; }
     else if (it.s.comp) {
       const span = Math.max(view.n - view.s, view.e - view.w);
       it.g = (zone && !S.date && await loadComposite(fam, it.s.comp, null, zone)) || await loadComposite(fam, it.s.comp, { ...view, stride: Math.max(1, Math.ceil(span / it.s.res / 70)) }, null);
@@ -3294,7 +3337,8 @@ ht.onchange = () => { S.home = ht.value; hp.value = S.home; store.set('home', S.
 const zs = $('zone');
 const ZONE_GROUPS = [['US East Coast', ['ng', 'ne', 'ma', 'se', 'fl']], ['Gulf of Mexico', ['flg', 'gulf', 'tx']],
   ['Atlantic islands & Caribbean', ['bda', 'tci', 'pr', 'puntacana', 'stlucia', 'cancun']],
-  ['Mexico & Central America (Pacific)', ['cabo', 'chiapas', 'guat', 'cr', 'crs', 'pan']]];
+  ['Mexico & Central America (Pacific)', ['cabo', 'chiapas', 'guat', 'cr', 'crs', 'pan']],
+  ['Hawaii & California', ['haw', 'cal']], ['Africa', ['zaf', 'moz', 'ken']], ['Australia', ['qld', 'nsw', 'vic', 'wa']]];
 for (const [label, keys] of ZONE_GROUPS) {
   const og = document.createElement('optgroup'); og.label = label;
   for (const k of keys) { const o = document.createElement('option'); o.value = k; o.textContent = ZONES[k].label; og.appendChild(o); }
@@ -3872,7 +3916,7 @@ function gateMode(m) {
   if (m === 'signup' && $('gPort').options.length < 2) {
     // home ports grouped like the Jump-to menu, with the current one picked
     $('gPort').innerHTML = '<option value="">Home port…</option>' + ZONE_GROUPS.map(([label, keys]) => {
-      const ports = PORTS.filter((p) => keys.some((k) => { const v = ZONES[k].view; return p[1] >= v[0][0] - 1.5 && p[1] <= v[1][0] + 1.5 && p[2] >= v[0][1] - 1.5 && p[2] <= v[1][1] + 1.5; }));
+      const ports = PORTS.filter((p) => keys.some((k) => { const v = ZONES[k].view, nb = !NO_JUMPVIEW_GROUP.has(k) && PRE_BOX[ZONES[k].box]; if (nb) return p[1] >= nb.s && p[1] <= nb.n && p[2] >= nb.w && p[2] <= nb.e; return p[1] >= v[0][0] - 1.5 && p[1] <= v[1][0] + 1.5 && p[2] >= v[0][1] - 1.5 && p[2] <= v[1][1] + 1.5; }));
       return `<optgroup label="${label}">${ports.map((p) => `<option>${p[0]}</option>`).join('')}</optgroup>`;
     }).join('');
     // a port can sit in two neighbouring areas: keep its first listing only
