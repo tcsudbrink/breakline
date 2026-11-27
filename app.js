@@ -1393,7 +1393,7 @@ async function sharpGet(prod) {
   } catch (e) { return null; }
 }
 async function sharpPut(prod, g) {
-  const k = sharpKey(prod); if (!k || !g?.win || g.pre || g.backup || g.sharp || g.win.static) return;
+  const k = sharpKey(prod); if (!k || !g?.win || g.pre || g.backup || g.sharp || g.subst || g.win.static) return;
   try {
     const db = await sharpOpen(), id = `${k}|${g.win.s},${g.win.n},${g.win.w},${g.win.e},${g.win.stride}`;
     const rec = {}; for (const [a, v] of Object.entries(g)) if (typeof v !== 'function') rec[a] = v;
@@ -1432,6 +1432,10 @@ async function loadGridLive(prod) {
   let text;
   // zoomed out over a prefetched zone: the hourly snapshot on our own CDN (about a second)
   try { const pg = await preForView(prod); if (pg) return pg; } catch (e) { console.warn('prefetch', e); }
+  if (prod === 'goes') {
+    const old = goesHours()[0];
+    throw new Error(S.hour && old && S.hour < old ? 'hourly temps only go back about 3 days; use daily Temp for older' : 'no hourly temps saved for this area');
+  }
   if (p.family && curSrc(p.family).comp) { const g = await loadComposite(p.family, curSrc(p.family).comp, win, null); g.src = S.src[p.family]; return g; }
   // Copernicus first where it's the better/more reliable source; NOAA if it fails
   const cmKey = p.family ? curSrc(p.family).cm : p.cm;
@@ -1461,12 +1465,25 @@ async function loadGridLive(prod) {
     return g;
   }
   try { text = await getText(p.url(win, dayArg(p))); }
-  catch (e) { if (!S.date) throw e; text = await getText(p.url(win, null)); }
+  catch (e) {
+    if (!S.date) throw e;
+    if (prod === 'sst' && S.src.sst === 'mur') { const sub = await murStandIn(win).catch(() => null); if (sub) return sub; }
+    text = await getText(p.url(win, null));
+  }
   const g = toGrid(parseAsc(text), p.v, p.conv); g.win = win; g.src = p.family ? S.src[p.family] : null;
   if (p.nrt) await overlayNrt(g, p, win).catch((e) => console.warn('NRT chlorophyll skipped', e));
   return g;
 }
 
+// MUR runs 1-3 days behind (NASA JPL). For a newer day, use NOAA's Geo-polar cloud-free analysis of that same day.
+async function murStandIn(win) {
+  const gs = SRC.sst.geopolar, zone = PRE && preZoneAt(map.getCenter()), e = zone && preEntry(`${zone}/sst/geopolar/${S.date}`);
+  let g;
+  if (e && !e.none) g = { ...(await preGrid(e, SST_C)) };
+  else { const w2 = windowFor(gs.res, PRODUCTS.sst.cells); g = toGrid(parseAsc(await getText(srcUrl(gs, w2, `${S.date}T${gs.t}`))), gs.v, SST_C); }
+  if (g.date !== S.date) return null;
+  return { ...g, pre: false, win, src: 'mur', subst: 'Geo-polar blended' };
+}
 async function overlayNrt(g, p, win) {
   const start = addDays(g.date, 1);
   if (S.date && S.date < start) return;
@@ -2659,6 +2676,7 @@ async function refresh() {
     autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate();
     const gg = S.data[S.prod];
     if (fail) status(`Some data didn't load (${fail.reason.message}).`, true);
+    else if (gg?.subst) status(`NASA hasn't published MUR cloud-free for ${new Date(S.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} yet (it runs 1-3 days behind), so this is NOAA's ${gg.subst} cloud-free for that day.`);
     else if (S.fc > 0 && p.sst) status(`Today's temps moved ${S.fc} h by the forecast currents: breaks and eddy edges shift; the water itself doesn't warm or cool here.`);
     else if (S.fc > 0) status('Ocean-model current forecast (Copernicus, 9 km). HF radar and satellite only show now.');
     else if (gg?.comp && p.family) status(`${gg.comp === 1 ? '1-day' : '3-day'} composite: ${gg.looks} satellite looks stacked, ${gg.coverPct}% of the area covered${gg.noPolar && p.family === 'sst' ? " (GOES only: NOAA's polar-pass server didn't answer)" : ''}. ${p.family === 'sst' ? 'Each spot shows the warm end of its clear readings (clouds read cold).' : 'Each spot is the average of its clear readings.'}`);
@@ -2815,6 +2833,10 @@ async function preGrid(entry, conv) {
 }
 // For the main chart: use the prefetched grid when zoomed out over a prefetched zone
 // force = the live source failed: use the saved copy at any zoom, for the zone under the middle of the screen
+function goesHours() {
+  const zone = PRE && preZoneAt(map.getCenter()); if (!zone) return [];
+  return Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort().map((k) => k.split('/')[2]);
+}
 const PRE_LATEST = { ssh: 'ssh/blend', mld: 'mld/ohc', sss: 'sss/smap' };
 async function preForView(prod, force) {
   // Hourly GOES (and the composites built on it) only exist as Breakline's saved copy now: NOAA dropped the hourly
@@ -2822,7 +2844,7 @@ async function preForView(prod, force) {
   const savedOnly = prod === 'goes' || (PRODUCTS[prod].family && curSrc(PRODUCTS[prod].family).comp);
   if (!force && !savedOnly && map.getZoom() > 8) return null;
   await preReady; if (!PRE) return null;
-  const b = map.getBounds(), zone = force ? preZoneAt(map.getCenter()) : preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
+  const b = map.getBounds(), zone = force || savedOnly ? preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }) || preZoneAt(map.getCenter()) : preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
   const p = PRODUCTS[prod];
   if (p.zlev && S.zlev) return null;              // saved copies are surface only
   if (PRE_LATEST[prod]) {
@@ -2835,7 +2857,9 @@ async function preForView(prod, force) {
     const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort();
     const upto = S.hour ? hours.filter((k) => k.split('/')[2] <= S.hour) : hours;
     const pick = upto.slice(-24); if (!pick.length) return null;
-    const grids = await Promise.all(pick.map((k) => preGrid(PRE.items[k], SST_C)));
+    const got = await Promise.allSettled(pick.map((k) => preGrid(PRE.items[k], SST_C)));
+    const okk = pick.filter((k, i) => got[i].status === 'fulfilled'), grids = got.filter((x) => x.status === 'fulfilled').map((x) => x.value);
+    if (!grids.length) return null; pick.splice(0, pick.length, ...okk);
     const last = grids[grids.length - 1], v = last.v.slice();
     for (let k = grids.length - 2; k >= 0; k--) { const sl = grids[k].v; for (let i = 0; i < v.length; i++) if (v[i] !== v[i]) v[i] = sl[i]; }
     let fresh = 0, any = 0; for (let i = 0; i < v.length; i++) { if (last.v[i] === last.v[i]) fresh++; if (v[i] === v[i]) any++; }
@@ -2997,7 +3021,9 @@ function stepTime(dir) {
   }
   if (p.hourly) {
     const cur = S.hour || g?.times?.[g.times.length - 1] || S.latestHour; if (!cur) return;
-    const next = hourAdd(cur, dir); S.hour = S.latestHour && next >= S.latestHour ? null : next;
+    const next = hourAdd(cur, dir), old = goesHours()[0];
+    if (dir < 0 && old && next < old) { status('Hourly temps only go back about 3 days. Switch to daily Temp to go further back.', true); return; }
+    S.hour = S.latestHour && next >= S.latestHour ? null : next;
   } else {
     const cur = S.date || g?.date; if (!cur) return;
     const next = addDays(cur, dir); S.date = next >= isoDate(new Date()) ? null : next;
@@ -3016,7 +3042,8 @@ dp.onchange = () => {
   const d = dp.value; if (!d) return;
   S.fc = 0;
   if (PRODUCTS[S.prod].hourly) {      // hourly GOES only keeps ~5 days: older dates switch to the daily map
-    if (d < addDays(isoDate(new Date()), -4)) { S.prod = 'sst'; store.set('prod', 'sst'); document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === 'sst')); S.hour = null; S.date = d; }
+    const old = goesHours()[0];
+    if (old ? `${d}T23:00:00Z` < old : d < addDays(isoDate(new Date()), -3)) { S.prod = 'sst'; store.set('prod', 'sst'); document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === 'sst')); S.hour = null; S.date = d; }
     else { S.hour = `${d}T12:00:00Z`; }
   } else S.date = d >= isoDate(new Date()) ? null : d;
   invalidateTimeData(); refresh();
