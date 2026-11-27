@@ -47,24 +47,8 @@
       "destination": "/sst-charts.html"
     },
     {
-      "source": "/erddap/pfeg/:path*",
-      "destination": "https://coastwatch.pfeg.noaa.gov/erddap/:path*"
-    },
-    {
-      "source": "/erddap/cw/:path*",
-      "destination": "https://coastwatch.noaa.gov/erddap/:path*"
-    },
-    {
-      "source": "/erddap/upwell/:path*",
-      "destination": "https://upwell.pfeg.noaa.gov/erddap/:path*"
-    },
-    {
-      "source": "/erddap/aoml/:path*",
-      "destination": "https://cwcgom.aoml.noaa.gov/erddap/:path*"
-    },
-    {
-      "source": "/erddap/ndbc/:path*",
-      "destination": "https://www.ndbc.noaa.gov/:path*"
+      "source": "/erddap/:path*",
+      "destination": "/api/erddap"
     }
   ],
   "headers": [
@@ -74,15 +58,6 @@
         {
           "key": "Cache-Control",
           "value": "no-cache"
-        }
-      ]
-    },
-    {
-      "source": "/erddap/(.*)",
-      "headers": [
-        {
-          "key": "CDN-Cache-Control",
-          "value": "public, s-maxage=1800, stale-while-revalidate=604800"
         }
       ]
     }

@@ -1,0 +1,33 @@
+# Pre-load Vercel's CDN with NOAA tiles for the main fishing grounds (warm.mjs), so a first look at that
+# water comes from the CDN in ~0.1 s instead of NOAA. Water temp twice a day (MUR's new day lands at
+# different times); seafloor depth never changes, so it rides along until every tile is on the CDN.
+name: warm
+
+on:
+  schedule:
+    - cron: "20 7,19 * * *"
+  push:
+    branches: [main]
+    paths: [warm.mjs, .github/workflows/warm.yml]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Water temp tiles
+        run: node warm.mjs mur 900
+      - name: Seafloor depth tiles
+        run: node warm.mjs depth 1500

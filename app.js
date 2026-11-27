@@ -389,6 +389,49 @@ async function getTextNet(url) {
   throw last || new Error('NOAA server busy');
 }
 
+// ---------- Fixed tiles: NOAA requests always ask for the same boxes, so Vercel's CDN can keep and share them ----------
+// A view is cut into tiles on a fixed grid (size picked from the source's resolution and stride), each tile padded
+// one cell so neighbours overlap, fetched (up to 6 at a time) and resampled onto one grid for the view. The same
+// tile URL comes up for every user who looks at that water, so after the first look it's served from the CDN
+// (about 0.1 s) instead of NOAA. prefetch_warm.py builds these exact URLs to pre-load the main fishing grounds.
+const TILE_CELLS = 128, TILE_SIZES = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+const r4 = (x) => +x.toFixed(4);
+function tileSize(res, stride) { const want = res * stride * TILE_CELLS; return [...TILE_SIZES].reverse().find((t) => t <= want) || TILE_SIZES[0]; }
+function tileWins(win, res) {
+  const T = tileSize(res, win.stride), pad = res * win.stride, out = [];
+  for (let a = Math.floor(win.s / T); a * T < win.n; a++) for (let b = Math.floor(win.w / T); b * T < win.e; b++) {
+    out.push({ a, b, T, s: r4(Math.max(a * T - pad, -89.99)), n: r4(Math.min((a + 1) * T + pad, 89.99)), w: r4(b * T - pad), e: r4((b + 1) * T + pad), stride: win.stride });
+  }
+  return out;
+}
+async function poolMap(items, n, f) {
+  const out = new Array(items.length); let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await f(items[i]).then((v) => ({ ok: v }), (e) => ({ err: e })); } }));
+  return out;
+}
+// urlFor(tileWin) -> ERDDAP url; v / conv as toGrid. Returns one grid over win.
+async function loadTiled(urlFor, win, res, v, conv) {
+  const tiles = tileWins(win, res);
+  const one = async (t) => toGrid(parseAsc(await getText(urlFor(t))), v, conv);
+  const got = await poolMap(tiles, 6, one);
+  // one more go at any tile that failed (NOAA often answers on the second try)
+  const again = got.map((x, i) => (x.err ? i : -1)).filter((i) => i >= 0);
+  if (again.length && again.length < tiles.length) (await poolMap(again.map((i) => tiles[i]), 3, one)).forEach((x, k) => { if (x.ok) got[again[k]] = x; });
+  const ok = got.map((x, i) => x.ok && { t: tiles[i], g: x.ok }).filter(Boolean);
+  if (!ok.length) throw got[0].err || new Error('no data');
+  const d = res * win.stride, ny = Math.max(2, Math.round((win.n - win.s) / d) + 1), nx = Math.max(2, Math.round((win.e - win.w) / d) + 1);
+  const out = new Float32Array(nx * ny).fill(NaN), T = tiles[0].T, byKey = new Map(ok.map((o) => [`${o.t.a},${o.t.b}`, o.g]));
+  for (let j = 0; j < ny; j++) {
+    const la = win.s + j * d, a = Math.floor(la / T);
+    for (let i = 0; i < nx; i++) {
+      const lo = win.w + i * d, g = byKey.get(`${a},${Math.floor(lo / T)}`);
+      if (g) out[j * nx + i] = sample(g, la, lo);
+    }
+  }
+  const newest = ok.map((o) => o.g).sort((x, y) => (y.date || '').localeCompare(x.date || ''))[0];
+  return { nx, ny, lat0: win.s, dlat: d, lon0: win.w, dlon: d, v: out, times: newest.times, date: newest.date, tiles: `${ok.length}/${tiles.length}`, partial: ok.length < tiles.length };
+}
+
 // ---------- Windows: fetch what is on screen, at a resolution that fits the zoom ----------
 function windowFor(res, cells, pad = 0.35) {
   const b = map.getBounds().pad(pad), snap = res >= 0.25 ? 0.25 : 0.1;
@@ -1393,7 +1436,7 @@ async function sharpGet(prod) {
   } catch (e) { return null; }
 }
 async function sharpPut(prod, g) {
-  const k = sharpKey(prod); if (!k || !g?.win || g.pre || g.backup || g.sharp || g.subst || g.win.static) return;
+  const k = sharpKey(prod); if (!k || !g?.win || g.pre || g.backup || g.sharp || g.subst || g.partial || g.win.static) return;
   try {
     const db = await sharpOpen(), id = `${k}|${g.win.s},${g.win.n},${g.win.w},${g.win.e},${g.win.stride}`;
     const rec = {}; for (const [a, v] of Object.entries(g)) if (typeof v !== 'function') rec[a] = v;
@@ -1464,13 +1507,14 @@ async function loadGridLive(prod) {
     if (!S.hour) S.latestHour = g.times[g.times.length - 1];
     return g;
   }
-  try { text = await getText(p.url(win, dayArg(p))); }
+  let g;
+  try { g = await loadTiled((t) => p.url(t, dayArg(p)), win, p.res, p.v, p.conv); }
   catch (e) {
     if (!S.date) throw e;
     if (prod === 'sst' && S.src.sst === 'mur') { const sub = await murStandIn(win).catch(() => null); if (sub) return sub; }
-    text = await getText(p.url(win, null));
+    g = await loadTiled((t) => p.url(t, null), win, p.res, p.v, p.conv);
   }
-  const g = toGrid(parseAsc(text), p.v, p.conv); g.win = win; g.src = p.family ? S.src[p.family] : null;
+  g.win = win; g.src = p.family ? S.src[p.family] : null;
   if (p.nrt) await overlayNrt(g, p, win).catch((e) => console.warn('NRT chlorophyll skipped', e));
   return g;
 }
@@ -1480,7 +1524,7 @@ async function murStandIn(win) {
   const gs = SRC.sst.geopolar, zone = PRE && preZoneAt(map.getCenter()), e = zone && preEntry(`${zone}/sst/geopolar/${S.date}`);
   let g;
   if (e && !e.none) g = { ...(await preGrid(e, SST_C)) };
-  else { const w2 = windowFor(gs.res, PRODUCTS.sst.cells); g = toGrid(parseAsc(await getText(srcUrl(gs, w2, `${S.date}T${gs.t}`))), gs.v, SST_C); }
+  else { const w2 = windowFor(gs.res, PRODUCTS.sst.cells); g = await loadTiled((t) => srcUrl(gs, t, `${S.date}T${gs.t}`), w2, gs.res, gs.v, SST_C); }
   if (g.date !== S.date) return null;
   return { ...g, pre: false, win, src: 'mur', subst: 'Geo-polar blended' };
 }
@@ -1601,8 +1645,8 @@ async function loadBathy() {
     const hit = await sharpGet('depth');
     if (hit) g = hit.g;
     else {
-      const url = `/erddap/pfeg/griddap/ETOPO_2022_v1_15s.asc?${q(`z[${latRange(win, true)}][${lonRange(win)}]`)}`;
-      g = toGrid(parseAsc(await getText(url)), 'z'); g.win = win; sharpPut('depth', g);
+      g = await loadTiled((t) => `/erddap/pfeg/griddap/ETOPO_2022_v1_15s.asc?${q(`z[${latRange(t, true)}][${lonRange(t)}]`)}`, win, 1 / 240, 'z');
+      g.win = win; sharpPut('depth', g);
     }
   }
   const vals = Float64Array.from(g.v, (x) => (x !== x ? 0 : x));
