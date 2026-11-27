@@ -45,7 +45,7 @@ export async function GET() {
   const slots = Math.ceil(list.length / PER_CALL), slot = Math.floor(Date.now() / 600000) % slots;
   const mine = list.slice(slot * PER_CALL, slot * PER_CALL + PER_CALL);
   const tally = { HIT: 0, STALE: 0, MISS: 0, fail: 0, skipped: 0 };
-  let next = 0;
+  let next = 0; const errs = new Set();
   await Promise.all(Array.from({ length: 6 }, async () => {
     while (next < mine.length) {
       const u = mine[next++];
@@ -54,10 +54,10 @@ export async function GET() {
         const r = await fetch(SITE + u, { headers: { 'User-Agent': 'Breakline-warm/1.0' }, signal: AbortSignal.timeout(Math.max(5000, BUDGET_MS - (Date.now() - t0))) });
         await r.arrayBuffer();
         const c = (r.headers.get('x-vercel-cache') || 'MISS').toUpperCase();
-        if (!r.ok && r.status !== 404) tally.fail++; else tally[c in tally ? c : 'MISS']++;
-      } catch (e) { tally.fail++; }
+        if (!r.ok && r.status !== 404) { tally.fail++; errs.add(`HTTP ${r.status}`); } else tally[c in tally ? c : 'MISS']++;
+      } catch (e) { tally.fail++; errs.add(String(e.name || e.message).slice(0, 60)); }
     }
   }));
-  return Response.json({ slot, of: slots, tiles: mine.length, total: list.length, ms: Date.now() - t0, region: process.env.VERCEL_REGION || null, ...tally },
+  return Response.json({ slot, of: slots, tiles: mine.length, total: list.length, ms: Date.now() - t0, region: process.env.VERCEL_REGION || null, ...tally, errors: [...errs] },
     { headers: { 'Cache-Control': 'no-store' } });
 }
