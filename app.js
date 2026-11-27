@@ -1360,7 +1360,7 @@ async function loadGrid(prod) {
     try { g = await preForView(prod, true); } catch (e2) { console.warn('saved copy', e2); }
     if (!g) throw e;
     console.warn(`${prod}: live source failed (${e.message}); using the saved copy`);
-    g.backup = true; return g;
+    g.backup = prod !== 'goes'; return g;              // hourly GOES is always our own copy, so it's not a backup
   }
 }
 async function loadGridLive(prod) {
@@ -2739,7 +2739,10 @@ async function preGrid(entry, conv) {
 // force = the live source failed: use the saved copy at any zoom, for the zone under the middle of the screen
 const PRE_LATEST = { ssh: 'ssh/blend', mld: 'mld/ohc', sss: 'sss/smap' };
 async function preForView(prod, force) {
-  if (!force && map.getZoom() > 8) return null;
+  // Hourly GOES (and the composites built on it) only exist as Breakline's saved copy now: NOAA dropped the hourly
+  // feed from ERDDAP in Nov 2026, and the prefetch builds it from the satellite's own files. So use it at any zoom.
+  const savedOnly = prod === 'goes' || (PRODUCTS[prod].family && curSrc(PRODUCTS[prod].family).comp);
+  if (!force && !savedOnly && map.getZoom() > 8) return null;
   await preReady; if (!PRE) return null;
   const b = map.getBounds(), zone = force ? preZoneAt(map.getCenter()) : preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
   const p = PRODUCTS[prod];

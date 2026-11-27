@@ -72,7 +72,7 @@ NOT_IN = {"mld/ohc": {"cr", "cabo"}}                   # NOAA's mixed-layer prod
 MODELS = ("hycom", "rtofs")                           # ocean-model currents, see models.py
 MODEL_MAX_AGE_H = 3
 DAYS = {"sst": 4, "chl": 7}
-GOES_HOURS = 72                                       # 3 days of hourly scans: feeds the 3-day composite
+GOES_HOURS = 72                                       # 3 days of hourly scans: feeds the 3-day composite and the offshore pack
 # 8-bit encodings (0 = no data): SST in deg C, chlorophyll as log10(mg/m3). Mirrored in app.js (PRE_ENC).
 ENC = {"sst": (-2.0, 34.0, False), "chl": (0.01, 50.0, True),
        "sla": (-1.5, 1.5, False), "mld": (1.0, 1000.0, True), "sss": (20.0, 42.0, False), "cur": (-2.5, 2.5, False)}
@@ -155,6 +155,44 @@ def age_h(e):
         return 99.0
 
 
+def run_goes(items, now, deadline, per_run=30):
+    """Cut each missing hour of the last GOES_HOURS into every zone. Newest hours first; a slow run picks up the rest."""
+    import goes
+    changed, n = False, 0
+    for h in range(1, GOES_HOURS + 2):                   # the files land about an hour after the scan
+        hour = (now - dt.timedelta(hours=h)).replace(minute=0, second=0, microsecond=0)
+        hs = hour.strftime("%Y-%m-%dT%H:00:00Z")
+        ents = [items.get(f"{z}/goes/{hs}") for z in ZONES]
+        # done when every zone has it; an hour NOAA hadn't posted yet is asked again after 20 minutes
+        if all(e and (not e.get("none") or e.get("cloud") or age_h(e) < 0.33 or h > 8) for e in ents):
+            continue
+        if n >= per_run or time.time() > deadline:
+            print("GOES: more hours left for the next run", flush=True); break
+        n += 1
+        try:
+            key = goes.file_for(hour)
+            if not key:
+                for z in ZONES:
+                    if not (items.get(f"{z}/goes/{hs}") or {}).get("file"):
+                        items[f"{z}/goes/{hs}"] = {"none": True, "got": now_iso()}
+                changed = True; print("none", "goes", hs, flush=True); continue
+            sc = goes.Scene(key)
+            for z, box in ZONES.items():
+                lat, lon, v = sc.cut(box)
+                if not np.isfinite(v).any():
+                    items[f"{z}/goes/{hs}"] = {"none": True, "cloud": True, "got": now_iso()}; continue
+                fn = f"{z}_goes_{hs.replace(':', '').replace('-', '')}.png"
+                Image.fromarray(encode("sst", v), "L").save(os.path.join(OUT, fn), optimize=True)
+                items[f"{z}/goes/{hs}"] = {"file": fn, "enc": "sst", "time": sc.hour.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                           "lat0": round(float(lat[0]), 5), "dlat": round(float(lat[1] - lat[0]), 6),
+                                           "lon0": round(float(lon[0]), 5), "dlon": round(float(lon[1] - lon[0]), 6),
+                                           "nx": int(len(lon)), "ny": int(len(lat)), "got": now_iso()}
+            changed = True; print("OK  ", "goes", hs, flush=True)
+        except Exception as ex:  # noqa: BLE001
+            print("FAIL", "goes", hs, str(ex)[:100], flush=True)
+    return changed
+
+
 def run_models(items, deadline):
     import models
     due = [(z, m) for z in ZONES for m in MODELS if age_h(items.get(f"{z}/cur/{m}_u/latest") or {}) >= MODEL_MAX_AGE_H]
@@ -224,13 +262,7 @@ def main():
         for key, s in SOURCES.items():
             fam = s[0]
             if key == "goes":
-                for h in range(3, GOES_HOURS + 3):       # GOES data lags ~4-5 h
-                    hs = (now - dt.timedelta(hours=h)).strftime("%Y-%m-%dT%H:00:00Z")
-                    e = items.get(f"{zone}/goes/{hs}")
-                    # an hour with no scan yet is re-asked every 30 min for the first 8 hours (GOES lags 4-5 h)
-                    if not e or (e.get("none") and h <= 8 and age_h(e) >= 0.5):
-                        jobs.append((zone, key, hs, hs))
-                continue
+                continue                                 # hourly GOES comes from NOAA's AWS bucket now: run_goes()
             if zone in NOT_IN.get(key, ()):
                 continue
             if key in LATEST:                            # newest copy only, refreshed every few hours
@@ -297,6 +329,9 @@ def main():
                     g.cancel()
                 break
 
+    # Hourly GOES-19 water temp from the satellite's own files (NOAA dropped it from ERDDAP in Nov 2026)
+    if not only or "goes" in only:
+        changed |= run_goes(items, now, deadline + 120)
     # Ocean-model currents (HYCOM, RTOFS): every few hours, straight from the modelling centres
     if not only or "model" in only:
         changed |= run_models(items, deadline + 180)

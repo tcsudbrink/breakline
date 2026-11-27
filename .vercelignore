@@ -9,3 +9,4 @@ data/spots_research.csv
 supabase/
 models.py
 landing/
+goes.py
