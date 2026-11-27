@@ -70,6 +70,11 @@ jobs:
         if: steps.fetch.outputs.changed == 'true'
         continue-on-error: true
         run: curl -s -m 70 -X POST https://www.breaklinefishing.com/api/check-alerts || true
+      # Pre-load the CDN with NOAA tiles for the main fishing grounds (runs on Vercel's East Coast region; see api/warm.js)
+      - name: Warm the tile cache
+        if: always()
+        continue-on-error: true
+        run: curl -s -m 70 https://www.breaklinefishing.com/api/warm || true
       # Keep a steady 10-minute rhythm: queue the next run 10 minutes after this one started, unless one is
       # already waiting (so the chain never doubles). The cron above restarts the chain if it ever breaks.
       - name: Queue the next check
