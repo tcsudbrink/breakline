@@ -1,0 +1,4 @@
+User-agent: *
+Disallow: /app
+Disallow: /api/
+Sitemap: https://www.breaklinefishing.com/sitemap.xml

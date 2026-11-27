@@ -138,6 +138,12 @@ button.ghost { background: transparent !important; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 3px; }
 #wxMode button { background: none; border: 0; color: var(--muted); padding: 4px 14px; border-radius: 13px; cursor: pointer; font: 600 12px system-ui, sans-serif; }
 #wxMode button.on { background: var(--accent); color: #04121d; }
+.modebar { position: absolute; top: 54px; left: calc(var(--rail) + 50%); transform: translateX(-50%); z-index: 1000; display: flex; gap: 3px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 3px; }
+.modebar button { background: none; border: 0; color: var(--muted); padding: 4px 14px; border-radius: 13px; cursor: pointer; font: 600 12px system-ui, sans-serif; }
+.modebar button.on { background: var(--accent); color: #04121d; }
+.modebar span { color: var(--muted); font: 600 12px system-ui, sans-serif; padding: 0 4px 0 10px; }
+.modebar select { background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 3px 8px; font: 600 12px system-ui, sans-serif; }
 .ppwx { margin-top: 8px; width: 100%; background: #13243a !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
 .wxt { border-collapse: collapse; margin-top: 8px; font-size: 11.5px; width: 100%; }
 .wxt th { color: var(--muted); font-weight: 600; text-align: left; padding: 2px 4px; }
@@ -263,7 +269,7 @@ button.ghost { background: transparent !important; }
   /* the two you use most on the water come first and are always on screen */
   .prod[data-prod=fish] { order: -2; }
   .prod[data-prod=ana] { order: -1; }
-  #wxMode { top: 130px; left: 10px; transform: none; }
+  #wxMode, .modebar { top: 130px; left: 10px; transform: none; }
   /* Where to fish / Analysis: a short sheet above the bottom bar, not a full page */
   .panel.side, #anaPanel { left: 6px !important; right: 6px !important; width: auto !important; top: auto !important;
     bottom: 62px; max-height: 38vh; padding: 8px 10px; font-size: 12px; }
@@ -341,7 +347,10 @@ body.gated #rail, body.gated #topLeft, body.gated #datebar { visibility: hidden;
 .gate-sub { margin: 0 0 16px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 #gForm { display: grid; gap: 10px; }
 #gForm input { width: 100%; background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 16px; }
-#gForm input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#gForm input:focus, #gForm select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#gForm select { width: 100%; background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 16px; }
+#gForm .gate-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+#gForm .gate-row[hidden] { display: none; }
 #gForm button { background: var(--accent); color: #04121d; border: 0; border-radius: 8px; padding: 12px; font-size: 16px; font-weight: 800; cursor: pointer; }
 #gForm button:disabled { opacity: .6; }
 #gMsg { margin: 12px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--text); }

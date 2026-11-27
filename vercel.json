@@ -5,18 +5,73 @@
   "outputDirectory": ".",
   "cleanUrls": false,
   "redirects": [
-    { "source": "/:path*", "has": [{ "type": "host", "value": "breakline-xi.vercel.app" }], "destination": "https://www.breaklinefishing.com/:path*", "permanent": true }
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "breakline-xi.vercel.app"
+        }
+      ],
+      "destination": "https://www.breaklinefishing.com/:path*",
+      "permanent": true
+    }
   ],
   "rewrites": [
-    { "source": "/app", "destination": "/app.html" },
-    { "source": "/app/", "destination": "/app.html" },
-    { "source": "/erddap/pfeg/:path*",   "destination": "https://coastwatch.pfeg.noaa.gov/erddap/:path*" },
-    { "source": "/erddap/cw/:path*",     "destination": "https://coastwatch.noaa.gov/erddap/:path*" },
-    { "source": "/erddap/upwell/:path*", "destination": "https://upwell.pfeg.noaa.gov/erddap/:path*" },
-    { "source": "/erddap/aoml/:path*",   "destination": "https://cwcgom.aoml.noaa.gov/erddap/:path*" },
-    { "source": "/erddap/ndbc/:path*",   "destination": "https://www.ndbc.noaa.gov/:path*" }
+    {
+      "source": "/app",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/app/",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/marlin-fishing-charts",
+      "destination": "/marlin-fishing-charts.html"
+    },
+    {
+      "source": "/tuna-fishing-charts",
+      "destination": "/tuna-fishing-charts.html"
+    },
+    {
+      "source": "/offshore-fishing-charts",
+      "destination": "/offshore-fishing-charts.html"
+    },
+    {
+      "source": "/sst-charts",
+      "destination": "/sst-charts.html"
+    },
+    {
+      "source": "/erddap/pfeg/:path*",
+      "destination": "https://coastwatch.pfeg.noaa.gov/erddap/:path*"
+    },
+    {
+      "source": "/erddap/cw/:path*",
+      "destination": "https://coastwatch.noaa.gov/erddap/:path*"
+    },
+    {
+      "source": "/erddap/upwell/:path*",
+      "destination": "https://upwell.pfeg.noaa.gov/erddap/:path*"
+    },
+    {
+      "source": "/erddap/aoml/:path*",
+      "destination": "https://cwcgom.aoml.noaa.gov/erddap/:path*"
+    },
+    {
+      "source": "/erddap/ndbc/:path*",
+      "destination": "https://www.ndbc.noaa.gov/:path*"
+    }
   ],
   "headers": [
-    { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    }
   ]
 }

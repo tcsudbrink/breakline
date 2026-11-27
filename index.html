@@ -12,10 +12,13 @@
 <link rel="icon" href="icon.svg">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="site.css">
+<link rel="canonical" href="https://www.breaklinefishing.com/">
+<script src="track.js"></script>
 <script>
   // the installed phone app opens here first: someone already signed in goes straight to the chart
   if ((matchMedia('(display-mode: standalone)').matches || navigator.standalone) && localStorage.getItem('breakline.auth')) location.replace('/app');
 </script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Breakline","applicationCategory":"SportsApplication","operatingSystem":"Web, iOS, Android","description":"Satellite fishing charts: water temperature, chlorophyll, altimetry, currents and where to fish, offshore and inshore.","url":"https://www.breaklinefishing.com/","offers":{"@type":"Offer","price":"100.00","priceCurrency":"USD","description":"5-day free trial, then $100 per year"}}</script>
 </head>
 <body>
 
@@ -161,7 +164,7 @@
   <p class="sub center">Try it free for 5 days, no card needed. Then it's $100 a year, less than one tank of fuel.</p>
   <div class="plan">
     <div class="plan-head"><h3>Breakline</h3><p class="price">$100<small>/year</small></p></div>
-    <p class="fine plan-sub">About $6.25 a month, billed yearly. Cancel any time.</p>
+    <p class="fine plan-sub">About $8.33 a month, billed yearly. Cancel any time.</p>
     <ul class="ticks">
       <li>Every chart, every layer, every area</li>
       <li>Hourly water temp plus 1-day and 3-day composites</li>

@@ -21,10 +21,11 @@
     <h2 id="gTitle">Sign in</h2>
     <p id="gSub" class="gate-sub"></p>
     <form id="gForm" novalidate>
-      <input id="gName" type="text" autocomplete="name" placeholder="Your name" hidden>
+      <div id="gNames" class="gate-row" hidden><input id="gFirst" type="text" autocomplete="given-name" placeholder="First name"><input id="gLast" type="text" autocomplete="family-name" placeholder="Last name"></div>
       <input id="gEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email" required>
       <input id="gPass" type="password" autocomplete="current-password" placeholder="Password">
       <input id="gPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="Phone" hidden>
+      <select id="gPort" aria-label="Home port" hidden><option value="">Home port…</option></select>
       <button id="gGo" type="submit">Sign in</button>
     </form>
     <p id="gMsg"></p>
@@ -46,6 +47,7 @@
     <button class="prod" data-prod="cur"><span class="ico">&#10148;</span><span>Currents</span></button>
     <button class="prod" data-prod="sss"><span class="ico">SAL</span><span>Salinity</span></button>
     <button class="prod" data-prod="mld"><span class="ico">MLD</span><span>Mix layer</span></button>
+    <button class="prod" data-prod="o2"><span class="ico">O&#8322;</span><span>Oxygen</span></button>
     <button class="prod" data-prod="ftle"><span class="ico">FSLE</span><span>Fronts</span></button>
     <button class="prod" data-prod="wx"><span class="ico">&#9729;</span><span>Weather</span></button>
     <button class="prod" data-prod="bottom"><span class="ico">&#9650;</span><span>Bottom</span></button>
@@ -73,6 +75,8 @@
   <button id="dPick" class="ghost" title="Every satellite pass for this area, as thumbnails">Charts &#9662;</button>
 </div>
 
+<div id="curMode" class="modebar" hidden><button data-m="sat" title="Satellite altimetry currents, plus HF radar near the coast">Satellite</button><button data-m="hycom" title="HYCOM ocean model (Navy ESPC), newest run">HYCOM</button><button data-m="rtofs" title="NOAA RTOFS ocean model, newest run">RTOFS</button></div>
+<div id="zMode" class="modebar" hidden><span>Depth</span><select id="zLevel" aria-label="Depth level"></select></div>
 <div id="wxMode" hidden><button data-m="wind">Wind</button><button data-m="waves">Waves</button></div>
 
 <div id="status" hidden></div>
@@ -129,6 +133,10 @@
     <div class="row"><button id="acctSubscribe" hidden>Subscribe</button><button id="acctManage" class="ghost" hidden>Manage subscription</button></div>
     <p id="acctMsg" class="hint"></p>
   </div>
+  <h3>Offshore, no signal</h3>
+  <p class="hint">Saves the last 48 hours of every chart for your home port's area (temp, hourly scans, color, altimetry, currents, salinity, mixed layer) so the app works offshore. Find your water works too. Weather, tides and HF radar need signal.</p>
+  <div class="row"><button id="offGo">Download for offshore</button></div>
+  <p id="offMsg" class="hint"></p>
   <h3>Spots <span id="wCount"></span></h3>
   <p class="hint">Tap the chart to read the water and save a spot.</p>
   <ol id="wList"></ol>
@@ -168,8 +176,9 @@
     <div class="row2"><select class="mode"><option value="on">On a break</option><option value="strong">On a strong break</option><option value="off">Away from breaks</option></select></div></div>
   <div class="fwc" data-k="chl"><label><input type="checkbox" class="on"> Chlorophyll (color)</label>
     <div class="row2"><input class="lo" type="number" min="0" step="0.01" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="0.01" placeholder="max"><span class="lbl">mg/m&sup3;</span></div></div>
-  <div class="fwc" data-k="cur"><label><input type="checkbox" class="on"> Current</label>
-    <div class="row2"><input class="lo" type="number" min="0" step="0.1" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="0.1" placeholder="max"><span class="lbl">kt</span></div></div>
+  <div class="fwc" data-k="cur"><label><input type="checkbox" class="on"> Current speed</label>
+    <div class="row2"><input class="lo" type="number" min="0" step="0.1" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="0.1" placeholder="max"><span class="lbl">kt</span></div>
+    <div class="row2"><span class="lbl">From</span><select id="fwCurSrc"><option value="sat">Satellite (daily)</option><option value="hycom">HYCOM model (newest run)</option><option value="rtofs">RTOFS model (newest run)</option></select></div></div>
   <div class="fwc" data-k="mld"><label><input type="checkbox" class="on"> Mixed layer depth</label>
     <div class="row2"><input class="lo" type="number" min="0" step="10" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="10" placeholder="max"><span class="lbl">ft</span></div>
     <p class="hint fwnote">Shallow mixed layer = warm water and bait squeezed near the surface. Not available off Pacific Costa Rica or Cabo.</p></div>
@@ -235,6 +244,7 @@
 <script src="loran.js"></script>
 <script src="solunar.js"></script>
 <script src="vendor/supabase.js"></script>
+<script src="track.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

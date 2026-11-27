@@ -17,6 +17,7 @@ async function record(sub, userId) {
     current_period_end: periodEnd(sub),
     stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
     stripe_subscription_id: sub.id,
+    cancel_at_period_end: !!(sub.cancel_at_period_end || sub.cancel_at),   // cancelled, still paid up until then
   });
 }
 

@@ -69,6 +69,8 @@ SOURCES = {
 LATEST = {"chl/dineof", "ssh/blend", "mld/ohc", "sss/smap", "cur/u", "cur/v"}
 LATEST_MAX_AGE_H = 3
 NOT_IN = {"mld/ohc": {"cr", "cabo"}}                   # NOAA's mixed-layer product stops short of the Pacific boxes
+MODELS = ("hycom", "rtofs")                           # ocean-model currents, see models.py
+MODEL_MAX_AGE_H = 3
 DAYS = {"sst": 4, "chl": 7}
 GOES_HOURS = 72                                       # 3 days of hourly scans: feeds the 3-day composite
 # 8-bit encodings (0 = no data): SST in deg C, chlorophyll as log10(mg/m3). Mirrored in app.js (PRE_ENC).
@@ -151,6 +153,37 @@ def age_h(e):
         return (dt.datetime.now(dt.timezone.utc) - dt.datetime.strptime(e["got"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)).total_seconds() / 3600
     except Exception:  # noqa: BLE001
         return 99.0
+
+
+def run_models(items, deadline):
+    import models
+    due = [(z, m) for z in ZONES for m in MODELS if age_h(items.get(f"{z}/cur/{m}_u/latest") or {}) >= MODEL_MAX_AGE_H]
+    if not due:
+        return False
+    changed, rt = False, None
+    for zone, m in due:
+        if time.time() > deadline:
+            print("time budget reached before all model currents", flush=True); break
+        try:
+            if m == "rtofs":
+                rt = rt or models.Rtofs()
+                lat, lon, u, v, t = rt.cut(ZONES[zone])
+            else:
+                lat, lon, u, v, t = models.hycom(ZONES[zone])
+            if not np.isfinite(u).any():
+                raise RuntimeError("all empty")
+            for part, a in (("_u", u), ("_v", v)):
+                ident = f"{zone}/cur/{m}{part}/latest"
+                old = items.get(ident)
+                e = models.entry(OUT, zone, m, part, lat, lon, a, t, encode, now_iso)
+                if old and old.get("file") and old["file"] != e["file"] and os.path.exists(os.path.join(OUT, old["file"])):
+                    os.remove(os.path.join(OUT, old["file"]))
+                items[ident] = e
+            changed = True
+            print("OK  ", f"{zone}/cur/{m}", t.isoformat(), flush=True)
+        except Exception as ex:  # noqa: BLE001
+            print("FAIL", f"{zone}/cur/{m}", str(ex)[:100], flush=True)
+    return changed
 
 
 def seed(base):
@@ -263,6 +296,10 @@ def main():
                 for g in futs:
                     g.cancel()
                 break
+
+    # Ocean-model currents (HYCOM, RTOFS): every few hours, straight from the modelling centres
+    if not only or "model" in only:
+        changed |= run_models(items, deadline + 180)
 
     keep_day = (today - dt.timedelta(days=max(DAYS.values()) + 1)).isoformat()
     keep_hr = (now - dt.timedelta(hours=GOES_HOURS + 6)).strftime("%Y-%m-%dT%H")

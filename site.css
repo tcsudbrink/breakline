@@ -110,3 +110,6 @@ footer .brand { font-size: 16px; }
 .regions > div { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09); border-radius: 12px; padding: 14px 16px; }
 .regions h3 { margin: 0 0 6px; font-size: 15px; color: #35c2ff; }
 .regions p { margin: 0; font-size: 14px; line-height: 1.55; color: #c4d1de; }
+
+/* Ad landing pages */
+.grid.three { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

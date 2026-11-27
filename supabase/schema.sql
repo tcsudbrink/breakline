@@ -107,3 +107,47 @@ begin
 end $$;
 -- backfill existing accounts
 insert into public.profiles (id, email) select id, email from auth.users on conflict (id) do update set email = excluded.email;
+-- ---------- v39: first/last name, home port and ad source from the sign-up form; follow-up list ----------
+alter table public.profiles add column if not exists first_name text;
+alter table public.profiles add column if not exists last_name text;
+alter table public.profiles add column if not exists home_port text;
+alter table public.profiles add column if not exists signup_source jsonb;     -- UTM tags / Google Ads click id from track.js
+alter table public.profiles add column if not exists created_at timestamptz not null default now();
+alter table public.subscriptions add column if not exists cancel_at_period_end boolean not null default false;
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
+begin
+  insert into public.profiles (id, full_name, first_name, last_name, phone, home_port, signup_source, email)
+  values (new.id, m->>'full_name', m->>'first_name', m->>'last_name', m->>'phone', m->>'home_port',
+          case when jsonb_typeof(m->'src') = 'object' then m->'src' end, new.email)
+  on conflict (id) do update set full_name = coalesce(excluded.full_name, profiles.full_name),
+    first_name = coalesce(excluded.first_name, profiles.first_name), last_name = coalesce(excluded.last_name, profiles.last_name),
+    phone = coalesce(excluded.phone, profiles.phone), home_port = coalesce(excluded.home_port, profiles.home_port),
+    signup_source = coalesce(excluded.signup_source, profiles.signup_source), email = excluded.email;
+  return new;
+end $$;
+-- earlier sign-ups: split the single name field
+update public.profiles set first_name = split_part(full_name, ' ', 1),
+  last_name = nullif(trim(substr(full_name, length(split_part(full_name, ' ', 1)) + 1)), '')
+where first_name is null and full_name is not null;
+update public.profiles p set created_at = u.created_at from auth.users u where u.id = p.id;
+
+-- Who to call or email: trials that ended without paying, cancellations (now or at renewal), failed payments.
+-- Dashboard only: Table Editor -> follow_up (no one can read it through the app).
+create or replace view public.follow_up with (security_invoker = false) as
+select p.first_name, p.last_name, p.email, p.phone, p.home_port,
+  case
+    when s.status = 'past_due' then 'card failed'
+    when s.cancel_at_period_end and s.status = 'active' then 'cancelled (ends ' || to_char(s.current_period_end, 'Mon DD') || ')'
+    when s.status in ('canceled', 'unpaid') then 'cancelled'
+    when coalesce(s.status, '') not in ('active', 'trialing') and u.created_at < now() - interval '5 days' then 'trial ended, never paid'
+  end as reason,
+  u.created_at as signed_up, s.current_period_end, p.signup_source->>'utm_campaign' as campaign
+from public.profiles p
+join auth.users u on u.id = p.id
+left join public.subscriptions s on s.user_id = p.id
+where not exists (select 1 from public.free_accounts f where lower(f.email) = lower(p.email))
+  and (s.status in ('past_due', 'canceled', 'unpaid') or (s.cancel_at_period_end and s.status = 'active')
+       or (coalesce(s.status, '') not in ('active', 'trialing') and u.created_at < now() - interval '5 days'));
+revoke all on public.follow_up from public, anon, authenticated;

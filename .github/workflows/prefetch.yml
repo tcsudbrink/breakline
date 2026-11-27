@@ -31,7 +31,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: .github/workflows/prefetch.yml
-      - run: pip install numpy pillow
+      - run: pip install numpy pillow h5py
       - name: Fetch charts (starts from what is already published)
         id: fetch
         env:

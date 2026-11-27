@@ -105,6 +105,11 @@ const SRC = {
     comp3: { label: '3-day composite', who: 'VIIRS + OLCI passes, last 3 days', comp: 3, v: 'chlor_a', res: 0.02 },
   },
 };
+// Depth levels for salinity and oxygen (the Copernicus model's own levels, in meters below the surface)
+const ZLEV = [{ l: 'Surface', e: null }, { l: '~50 ft', e: -15.81 }, { l: '~100 ft', e: -29.445 }, { l: '~150 ft', e: -47.374 }, { l: '~215 ft', e: -65.807 },
+  { l: '~300 ft', e: -92.326 }, { l: '~510 ft', e: -155.851 }, { l: '~1,045 ft', e: -318.127 }];
+const zlevTxt = () => (S.zlev ? ` at ${ZLEV[S.zlev].l}` : '');
+const CUR_SRC = { sat: 'Satellite', hycom: 'HYCOM', rtofs: 'RTOFS' };
 const srcUrl = (s, w, t) => `/erddap/${s.host}/griddap/${s.id}.asc?${q(`${s.v}[(${t || 'last'})]${s.alt ? '[(0.0)]' : ''}[${latRange(w, s.asc)}][${lonRange(w)}]`)}`;
 const curSrc = (fam) => SRC[fam][S.src[fam]] || Object.values(SRC[fam])[0];
 
@@ -138,13 +143,18 @@ const PRODUCTS = {
     stops: ['#160d4f', '#1b3fa8', '#1b7fcf', '#1fb3b8', '#35c47a', '#9bd83a', '#f0dc34', '#f39a2c', '#d8432a', '#8e1626'],
   },
   sss: {
-    name: 'Salinity', unit: 'PSU', step: 0.1, res: 0.083, cells: 360, cm: 'so',
+    get name() { return `Salinity${zlevTxt()}`; }, zlev: true, unit: 'PSU', step: 0.1, res: 0.083, cells: 360, cm: 'so',
     url: (w, t) => `/erddap/cw/griddap/noaacwSMAPsssDaily.asc?${q(`sss[(${t || 'last'})][(0.0)][${latRange(w, true)}][${lonRange(w)}]`)}`,
     v: 'sss', conv: (x) => (x > 20 && x < 42 ? x : NaN), fmt: (v) => `${v.toFixed(2)} PSU`, day: (d) => `${d}T12:00:00Z`,
     stops: ['#3b2a1a', '#7a5a2b', '#b89a4e', '#d9d79a', '#9fd3c7', '#4fb0c6', '#2b7bba', '#1f4a8f', '#1a2766'],
   },
+  o2: {
+    get name() { return `Dissolved oxygen${zlevTxt()}`; }, zlev: true, unit: 'mg/L', step: 0.1, res: 0.25, cells: 300, cm: 'o2',
+    conv: (x) => (x >= 0 && x < 500 ? x * 0.032 : NaN), fmt: (v) => `${v.toFixed(1)} mg/L`,   // model gives mmol/m³; ×0.032 = mg/L
+    stops: ['#4a0c2e', '#8e1b3a', '#d0453a', '#f08a3c', '#f6c95a', '#c9e27a', '#6fcf9b', '#2fa6b5', '#1f6fa8', '#1b3f7a'],
+  },
   cur: {
-    get name() { return S.fc ? 'Currents (ocean-model forecast)' : 'Currents (HF radar + satellite)'; }, unit: 'kt', step: 0.1, res: 0.25, computed: true,
+    get name() { return S.fc ? 'Currents (ocean-model forecast)' : S.curSrc !== 'sat' ? `Currents (${CUR_SRC[S.curSrc]} ocean model)` : 'Currents (HF radar + satellite)'; }, unit: 'kt', step: 0.1, res: 0.25, computed: true,
     fmt: (v) => `${v.toFixed(2)} kt`,
     stops: ['#0b1a2e', '#16345e', '#1f5f9a', '#2a93c4', '#4fc3c9', '#a6dd8a', '#f2e04a', '#f6a23a', '#e5533b', '#b3123a'],
   },
@@ -215,7 +225,9 @@ const S = {
 if (!PRODUCTS[S.prod]) S.prod = 'sst';
 store.set('wpts', S.wpts); if (!store.get('wptsIds', null)) store.set('wptsIds', S.wpts.map((w) => w.id));   // pin the ids given to older spots
 S.fc = 0;   // forecast hours ahead of now (0 = now)
-S.wxMode = store.get('wxMode', 'wind'); S.wxH = 0;   // weather: wind or waves, hours ahead
+S.wxMode = store.get('wxMode', 'wind'); S.wxH = 0;
+S.curSrc = CUR_SRC[store.get('curSrc', 'sat')] ? store.get('curSrc', 'sat') : 'sat';   // currents: satellite, HYCOM or RTOFS
+S.zlev = Math.min(ZLEV.length - 1, Math.max(0, store.get('zlev', 0) | 0));          // depth level for salinity / oxygen   // weather: wind or waves, hours ahead
 // the grid on screen: the temp-drift forecast when one is showing, otherwise the loaded data
 const PG = () => (S.fc > 0 && PRODUCTS[S.prod].sst && S.data.drift ? S.data.drift : S.data[S.prod]);
 
@@ -901,11 +913,11 @@ function curAt(lat, lon) {
     const u = sample(f, lat, lon, f.u), v = sample(f, lat, lon, f.vv);
     return u === u && v === v ? [u, v, 'model forecast'] : null;
   }
-  for (const [h, lbl] of [[map.getZoom() >= 9 && S.data.hf1, 'HF radar 1 km'], [S.data.hf, 'HF radar 6 km']]) {
+  for (const [h, lbl] of S.curSrc !== 'sat' ? [] : [[map.getZoom() >= 9 && S.data.hf1, 'HF radar 1 km'], [S.data.hf, 'HF radar 6 km']]) {
     if (h) { const u = sample(h, lat, lon, h.u), v = sample(h, lat, lon, h.vv); if (u === u && v === v) return [u, v, lbl]; }
   }
   const b = S.data.curb;
-  if (b) { const u = sample(b, lat, lon, b.u), v = sample(b, lat, lon, b.vv); if (u === u && v === v) return [u, v, 'satellite']; }
+  if (b) { const u = sample(b, lat, lon, b.u), v = sample(b, lat, lon, b.vv); if (u === u && v === v) return [u, v, b.model ? `${CUR_SRC[b.model]} model ${niceHour(b.time)}` : 'satellite']; }
   return null;
 }
 // Arrows on a fixed screen spacing, so detail scales with zoom; length and color by speed
@@ -1187,6 +1199,7 @@ function drawLegend() {
   else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
   if (S.fc > 0) when = `${niceHour(fcTime(S.fc))} (+${S.fc} h forecast)`;
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
+  if (S.prod === 'cur' && S.data.curb?.model) when = niceHour(S.data.curb.time);
   const bk = g?.backup ? ' · <b title="NOAA is not answering right now, so this is the Breakline saved copy (checked every 10 minutes)">saved copy</b>' : '';
   $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}${bk}</span>`;
   $('legend').classList.toggle('fixed', !!p.noLegendRange);
@@ -1240,6 +1253,8 @@ const CM = {
   vgos: { layer: 'SEALEVEL_GLO_PHY_L4_NRT_008_046/cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D_202506/vgos', min: -3, max: 3, res: 0.125 },
   mld: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_0.083deg_P1D-m_202406/mlotst', min: 0, max: 400, res: 0.083, model: true },
   so: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m_202406/so', min: 28, max: 38, res: 0.083, model: true },
+  // dissolved oxygen, mmol/m³ (Copernicus global biogeochemistry model, daily, 1/4°)
+  o2: { layer: 'GLOBAL_ANALYSISFORECAST_BGC_001_028/cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m_202311/o2', min: 0, max: 350, res: 0.25, model: true },
   // ocean-model surface currents every 6 h, analysis + ~9-day forecast (for the current and temp-drift forecasts)
   uo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/uo', min: -3, max: 3, res: 0.083, model: true },
   vo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/vo', min: -3, max: 3, res: 0.083, model: true },
@@ -1256,7 +1271,7 @@ const CM_HIST = {
   so: { nrtFrom: '2022-06-01', layer: 'GLOBAL_MULTIYEAR_PHY_001_030/cmems_mod_glo_phy_my_0.083deg_P1D-m_202311/so', from: '1993-01-01' },
 };
 function cmLayerFor(s, day) {
-  const key = Object.keys(CM).find((k) => CM[k] === s), h = key && CM_HIST[key];
+  const key = Object.keys(CM).find((k) => CM[k] === s || CM[k].layer === s.layer), h = key && CM_HIST[key];
   if (!h || !day) return s.layer;
   const d = day.slice(0, 10), liveFrom = h.nrtFrom || addDays(isoDate(new Date()), -h.nrtDays);
   if (d >= liveFrom) return s.layer;
@@ -1265,7 +1280,7 @@ function cmLayerFor(s, day) {
 }
 const cmStyle = (s) => `cmap:gray,range:${s.min}/${s.max}${s.log ? ',logScale' : ''}`;
 const cmTile = (s, z, x, y, day) => `${CMEMS}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${encodeURIComponent(s.layer)}&STYLE=${encodeURIComponent(cmStyle(s))}` +
-  `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day.includes('T') ? day : `${day}T00:00:00Z`}`;
+  `&TILEMATRIXSET=EPSG:3857&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png&TIME=${day.includes('T') ? day : `${day}T00:00:00Z`}${s.elev != null ? `&ELEVATION=${s.elev}` : ''}`;
 let CM_INV = null;      // gray level -> color-table index
 async function cmInverse() {
   if (CM_INV) return CM_INV;
@@ -1358,11 +1373,12 @@ async function loadGridLive(prod) {
   const cmKey = p.family ? curSrc(p.family).cm : p.cm;
   if (cmKey) {
     try {
-      const g = await loadCmems(CM[cmKey], win, S.date && !CM[cmKey].model ? S.date : (S.date || null));
+      const cs = p.zlev && S.zlev ? { ...CM[cmKey], elev: ZLEV[S.zlev].e } : CM[cmKey];
+      const g = await loadCmems(cs, win, S.date && !CM[cmKey].model ? S.date : (S.date || null));
       const out = { ...g, win, v: g.v.map((x) => (x === x && p.conv ? p.conv(x) : x)), src: p.family ? S.src[p.family] : 'cmems', via: 'Copernicus' };
       return out;
     } catch (e) {
-      if (p.family) throw e;                     // a chosen Copernicus source: report it
+      if (p.family || !p.url || (p.zlev && S.zlev)) throw e;   // a chosen Copernicus source, or nothing else has it: report it
       console.warn('Copernicus failed, trying NOAA', e);
     }
   }
@@ -1525,6 +1541,12 @@ async function loadBathy() {
 
 // Satellite geostrophic currents: Copernicus DUACS (daily, ~14 km, current to today) first, NOAA blended as backup
 async function loadCurrents(days = 1, latest = false) {
+  // HYCOM / RTOFS: the newest model run, from Breakline's saved copy (refreshed every 3 h)
+  if (S.curSrc !== 'sat' && days === 1 && !S.date) {
+    const m = await preModelCurrents(S.curSrc).catch((e) => { console.warn(S.curSrc, e); return null; });
+    if (m) return m;
+    status(`${CUR_SRC[S.curSrc]} isn't saved for this area yet; showing satellite currents.`, true);
+  }
   try {
     const win = windowFor(0.125, 360), end = S.date && !latest ? S.date : await cmLatest(CM.ugos);
     const dates = Array.from({ length: days }, (_, k) => addDays(end, k - days + 1));
@@ -1535,6 +1557,13 @@ async function loadCurrents(days = 1, latest = false) {
   } catch (e) { console.warn('Copernicus currents failed, trying NOAA', e); }
   try { return await loadCurrentsNoaa(days, latest); }
   catch (e) { const c = await preCurrents().catch(() => null); if (c) return c; throw e; }
+}
+async function preModelCurrents(src, zone = preZoneAt(map.getCenter())) {
+  await preReady; if (!PRE || !zone) return null;
+  const eu = preEntry(`${zone}/cur/${src}_u/latest`), ev = preEntry(`${zone}/cur/${src}_v/latest`);
+  if (!eu?.file || !ev?.file) return null;
+  const ok = (x) => (Math.abs(x) < 2.4 ? x : NaN), [gu, gv] = await Promise.all([preGrid(eu, ok), preGrid(ev, ok)]);
+  return { ...gu, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, u: gu.v, vv: gv.v, us: [gu.v], vs: [gv.v], src, model: src, date: eu.time.slice(0, 10), time: eu.time };
 }
 // Satellite currents from Breakline's saved copy (one day, ~15 nm): used when both live sources are down, and by Find your water
 async function preCurrents(zone = preZoneAt(map.getCenter())) {
@@ -2528,7 +2557,7 @@ async function refresh() {
     if (needSsh && S.prod !== 'ssh' && !covers(S.data.ssh, 0.25, 999)) add('eddy rings', loadGrid('ssh').then((g) => { S.data.ssh = g; }));
     const needCur = S.ov.cur || S.prod === 'cur' || fishy;
     if (fishy && !S.date && !covers(S.data.goes, PRODUCTS.goes.res, PRODUCTS.goes.cells)) jobs.push(loadGrid('goes').then((g) => { S.data.goes = g; }).catch((e) => console.warn('hourly SST for fish', e)));
-    if (needCur && !covers(S.data.curb, 0.25, 999)) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
+    if (needCur && (!covers(S.data.curb, 0.25, 999) || (S.data.curb.model || 'sat') !== (S.date ? 'sat' : S.curSrc))) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
     if (needCur && !covers(S.data.hf, 0.055, 320)) jobs.push(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; }));
     if (needCur && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) jobs.push(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; }));
     if (S.prod === 'wx') add('weather', loadWx().then(() => buildWx()));
@@ -2570,6 +2599,8 @@ function updateDate() {
   $('datebar').classList.toggle('static', S.prod === 'bottom');
   if (S.prod === 'bottom') { $('dLabel').textContent = 'Seafloor · NOAA ETOPO 2022'; return; }
   $('wxMode').hidden = S.prod !== 'wx';
+  $('curMode').hidden = S.prod !== 'cur' || S.fc > 0;
+  $('zMode').hidden = !PRODUCTS[S.prod].zlev;
   if (S.prod === 'wx') {
     const t = S.data.wx?.times?.[0];
     $('dLabel').textContent = S.wxH ? `${t ? niceHour(t) : ''} (+${S.wxH} h)` : `Now${t ? ` · ${niceHour(t)}` : ''}`;
@@ -2605,7 +2636,7 @@ function updateDate() {
   }
   $('dNext').title = canFc ? 'Forecast: step ahead 6 hours' : 'Next';
 }
-function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'fish', 'ana']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
+function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'o2', 'fish', 'ana']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
 
 // ---------- Chart picker: thumbnails of every source x day for the current view ----------
 const PK = { fam: 'sst', items: [], token: 0 };
@@ -2666,7 +2697,8 @@ const THUMBS = new Map();   // thumbnails already fetched this session, so reope
 const LIVE_BASE = /^(localhost|127\.)/.test(location.hostname) ? 'live/' : 'https://tcsudbrink.github.io/breakline/live/';
 let PRE = null;
 async function loadManifest() {
-  try { const r = await fetch(`${LIVE_BASE}manifest.json?t=${Math.floor(Date.now() / 600000)}`); if (r.ok) PRE = await r.json(); } catch (e) { /* none yet */ }
+  try { const r = await fetch(`${LIVE_BASE}manifest.json?t=${Math.floor(Date.now() / 600000)}`); if (r.ok) { PRE = await r.json(); return; } } catch (e) { /* no signal: the offshore pack's copy below */ }
+  try { const r = 'caches' in window && await caches.match(`${LIVE_BASE}manifest.json`, { ignoreSearch: true }); if (r && !PRE) PRE = await r.json(); } catch (e) { /* none saved */ }
 }
 const preReady = loadManifest(); setInterval(loadManifest, 15 * 60 * 1000);
 // which prefetch box holds this window (all of it)
@@ -2711,6 +2743,7 @@ async function preForView(prod, force) {
   await preReady; if (!PRE) return null;
   const b = map.getBounds(), zone = force ? preZoneAt(map.getCenter()) : preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
   const p = PRODUCTS[prod];
+  if (p.zlev && S.zlev) return null;              // saved copies are surface only
   if (PRE_LATEST[prod]) {
     if (!force) return null;                     // live is sharper (Copernicus 8-14 km); the saved copy is the backup
     const e = preEntry(`${zone}/${PRE_LATEST[prod]}/latest`); if (!e?.file || (S.date && e.time.slice(0, 10) !== S.date)) return null;
@@ -2910,6 +2943,18 @@ dp.onchange = () => {
 $('dNext').onclick = () => stepTime(1);
 $('dLatest').onclick = () => { if (S.fc) { S.fc = 0; refresh(); return; } S.date = null; S.hour = null; invalidateTimeData(); refresh(); };
 
+// Currents source and depth level pickers
+document.querySelectorAll('#curMode button').forEach((b) => {
+  b.classList.toggle('on', b.dataset.m === S.curSrc);
+  b.onclick = () => {
+    S.curSrc = b.dataset.m; store.set('curSrc', S.curSrc);
+    document.querySelectorAll('#curMode button').forEach((x) => x.classList.toggle('on', x === b));
+    delete S.data.curb; delete S.data.cur; refresh();
+  };
+});
+$('zLevel').innerHTML = ZLEV.map((z, i) => `<option value="${i}">${z.l}</option>`).join('');
+$('zLevel').value = S.zlev;
+$('zLevel').onchange = () => { S.zlev = +$('zLevel').value; store.set('zlev', S.zlev); delete S.data.sss; delete S.data.o2; S.auto = true; refresh(); };
 document.querySelectorAll('#wxMode button').forEach((b) => {
   b.classList.toggle('on', b.dataset.m === S.wxMode);
   b.onclick = () => {
@@ -3577,7 +3622,7 @@ async function startCheckout(btn, say) {
 // back from Stripe: the webhook can take a few seconds to land
 if (/[?&]paid=1/.test(location.search)) {
   history.replaceState(null, '', location.pathname);
-  let n = 0; const poll = () => { if (!ACCT.user) { if (n++ < 20) setTimeout(poll, 1500); return; } checkAccess().then(() => { if (ACCT.access?.status !== 'pro' && n++ < 12) setTimeout(poll, 2500); else if (ACCT.access?.status === 'pro') status('You are subscribed. Thank you!'); }); };
+  let n = 0; const poll = () => { if (!ACCT.user) { if (n++ < 20) setTimeout(poll, 1500); return; } checkAccess().then(() => { if (ACCT.access?.status !== 'pro' && n++ < 12) setTimeout(poll, 2500); else if (ACCT.access?.status === 'pro') { status('You are subscribed. Thank you!'); adConversion('purchase', { value: 100, currency: 'USD' }); } }); };
   setTimeout(poll, 1500);
 }
 async function syncAll(first) {
@@ -3611,7 +3656,16 @@ function gateMode(m) {
     paywall: ['Your free trial has ended', `Keep every chart, every layer and your saved spots for ${PRICE_TXT}. Cancel any time.`, `Subscribe · ${PRICE_TXT}`, ''],
   }[m];
   $('gTitle').textContent = T[0]; $('gSub').textContent = T[1]; $('gGo').textContent = T[2];
-  $('gName').hidden = $('gPhone').hidden = m !== 'signup';
+  $('gNames').hidden = $('gPhone').hidden = $('gPort').hidden = m !== 'signup';
+  if (m === 'signup' && $('gPort').options.length < 2) {
+    // home ports grouped like the Jump-to menu, with the current one picked
+    $('gPort').innerHTML = '<option value="">Home port…</option>' + ZONE_GROUPS.map(([label, keys]) => {
+      const ports = PORTS.filter((p) => keys.some((k) => { const v = ZONES[k].view; return p[1] >= v[0][0] - 1.5 && p[1] <= v[1][0] + 1.5 && p[2] >= v[0][1] - 1.5 && p[2] <= v[1][1] + 1.5; }));
+      return `<optgroup label="${label}">${ports.map((p) => `<option>${p[0]}</option>`).join('')}</optgroup>`;
+    }).join('');
+    // a port can sit in two neighbouring areas: keep its first listing only
+    const seen = new Set(); [...$('gPort').querySelectorAll('option')].forEach((o) => { if (o.value && seen.has(o.value)) o.remove(); else seen.add(o.value); });
+  }
   $('gEmail').hidden = m === 'recovery' || m === 'paywall'; $('gPass').hidden = m === 'forgot' || m === 'paywall';
   $('gPayLinks').hidden = m !== 'paywall';
   $('gPass').autocomplete = T[3]; $('gPass').placeholder = m === 'signin' ? 'Password' : 'Password (8+ characters)';
@@ -3629,15 +3683,20 @@ const gErr = (e) => {
   if (/fetch|network/i.test(t)) return navigator.onLine ? 'Could not reach the sign-in server. Try again.' : 'You are offline. Connect to sign in.';
   return t;
 };
+// Ad attribution (track.js, shared with the website): where this person first came from, and conversion pings
+const adSource = () => { try { return window.blSource ? window.blSource() : null; } catch (e) { return null; } };
+const adConversion = (name, extra) => { try { window.blTrack?.(name, extra); } catch (e) { /* never block sign-up */ } };
 async function gateSubmit(ev) {
   ev.preventDefault();
   if (G.mode === 'paywall') { startCheckout($('gGo'), gMsg); return; }
   const sb = sbInit(), email = $('gEmail').value.trim(), password = $('gPass').value;
   if (!sb) { gMsg('Could not load sign-in. Reload the page.', true); return; }
   if (G.mode !== 'recovery' && !/^\S+@\S+\.\S+$/.test(email)) { gMsg('Enter your email address.', true); return; }
-  const fullName = $('gName').value.trim().replace(/\s+/g, ' '), phone = $('gPhone').value.trim();
-  if (G.mode === 'signup' && fullName.length < 2) { gMsg('Enter your name.', true); return; }
+  const clean = (x) => x.trim().replace(/\s+/g, ' ');
+  const first = clean($('gFirst').value), last = clean($('gLast').value), fullName = `${first} ${last}`.trim(), phone = $('gPhone').value.trim(), port = $('gPort').value;
+  if (G.mode === 'signup' && (!first || !last)) { gMsg('Enter your first and last name.', true); return; }
   if (G.mode === 'signup' && phone.replace(/\D/g, '').length < 10) { gMsg(phone ? 'Check the phone number (10 digits, with area code).' : 'Enter your phone number.', true); return; }
+  if (G.mode === 'signup' && !port) { gMsg('Pick your home port (the closest inlet if yours isn\'t listed).', true); return; }
   if ((G.mode === 'signup' || G.mode === 'recovery') && password.length < 8) { gMsg('Use a password with at least 8 characters.', true); return; }
   $('gGo').disabled = true; gMsg('One moment…');
   const back = location.origin + '/app';
@@ -3645,7 +3704,10 @@ async function gateSubmit(ev) {
     if (G.mode === 'signin') {
       const { error } = await sb.auth.signInWithPassword({ email, password }); if (error) throw error; gMsg('');
     } else if (G.mode === 'signup') {
-      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back, data: { full_name: fullName, phone } } }); if (error) throw error;
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back, data: { full_name: fullName, first_name: first, last_name: last, phone, home_port: port, src: adSource() } } }); if (error) throw error;
+      // start them at their home port (this also syncs to the account once they're in)
+      if (PORTS.some((x) => x[0] === port)) { hp.value = port; hp.dispatchEvent(new Event('change')); }
+      adConversion('sign_up');
       if (data.session) gMsg('');
       else if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
         // Supabase answers a sign-up for an existing email with a fake success and sends nothing
@@ -3700,11 +3762,82 @@ syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
 
+// ---------- Offshore pack: save the last 48 hours of every chart for your area, for use with no signal ----------
+// Everything comes from Breakline's saved copies (GitHub Pages). The service worker serves these files from its
+// cache, and the manifest falls back to the saved one, so with no signal every chart, Find your water and the
+// picker still work; live-only extras (weather, tides, HF radar, the NOAA nautical chart) need a connection.
+const OFF_CACHE = 'breakline-data-v2', OFF_HOURS = 48;
+const BOX_LABEL = { east: 'East Coast & Gulf of Mexico', fl: 'Florida, Bahamas & Turks and Caicos', cr: 'Costa Rica & Panama', cabo: 'Cabo & Mag Bay',
+  chiapas: 'Chiapas & Guatemala', cancun: 'Cancún & Cozumel', puntacana: 'Punta Cana', stlucia: 'St. Lucia', pr: 'Puerto Rico & Virgin Islands' };
+function offZones() {
+  const zs = new Set(), add = (la, lo) => { const z = preZoneAt({ lat: la, lng: lo }); if (z) zs.add(z); };
+  const hp4 = PORTS.find((x) => x[0] === S.home); if (hp4) add(hp4[1], hp4[2]);
+  const c = map.getCenter(); add(c.lat, c.lng);
+  return [...zs];
+}
+function offFiles(zones) {
+  const cutHour = new Date(Date.now() - OFF_HOURS * 3600e3).toISOString().slice(0, 13), cutDay = cutHour.slice(0, 10);
+  const files = [];
+  for (const [k, e] of Object.entries(PRE?.items || {})) {
+    if (!e.file || !zones.includes(k.split('/')[0])) continue;
+    const when = k.split('/').pop();
+    // the latest copy of each daily product, plus every scan and pass from the last 48 h (and the day before, for the blends)
+    if (when === 'latest' || (k.includes('/goes/') ? when.slice(0, 13) >= cutHour : when >= addDays(cutDay, -1))) files.push(e.file);
+  }
+  return files;
+}
+async function offlinePack() {
+  const btn = $('offGo'), msg = (t, err) => { $('offMsg').innerHTML = t; $('offMsg').classList.toggle('err', !!err); };
+  if (!('caches' in window)) { msg('This browser can\'t save charts for offline use.', true); return; }
+  btn.disabled = true;
+  try {
+    await loadManifest(); if (!PRE) throw new Error('Couldn\'t reach the saved charts. Try again with signal.');
+    const zones = offZones(); if (!zones.length) throw new Error('Breakline doesn\'t save charts for this area yet.');
+    const c = await caches.open(OFF_CACHE), files = offFiles(zones);
+    // the manifest, so the app knows what it has with no signal
+    await c.put(`${LIVE_BASE}manifest.json`, new Response(JSON.stringify(PRE), { headers: { 'content-type': 'application/json' } }));
+    // app files and the shipped depth/wreck/spot data (also cached by the service worker on install)
+    const statics = ['app', 'app.html', 'app.js', 'style.css', 'track.js', 'loran.js', 'solunar.js', 'vendor/supabase.js', 'vendor/leaflet.js', 'vendor/leaflet.css',
+      'vendor/d3-array.min.js', 'vendor/d3-contour.min.js', 'data/wrecks.json', 'data/spots.json', 'data/places.json', 'data/tide_stations.json',
+      ...['2m', 'fl', 'cr', 'cabo', 'chiapas', 'cancun', 'puntacana', 'stlucia'].flatMap((n) => [`data/bathy_${n}.json`, `data/bathy_${n}.bin`])];
+    let done = 0, bytes = 0, failed = 0;
+    const todo = [...files.map((f) => `${LIVE_BASE}${f}`), ...statics.map((f) => new URL(f, location.origin + '/').href)];
+    const one = async (u) => {
+      try {
+        if (!u.startsWith(location.origin) && await c.match(u)) { done++; return; }   // chart files never change once saved
+        const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status);
+        const b = await r.clone().blob(); bytes += b.size;
+        await c.put(u, r);
+        done++;
+      } catch (e) { failed++; }
+      if ((done + failed) % 10 === 0) msg(`Saving… ${done + failed} of ${todo.length}`);
+    };
+    for (let i = 0; i < todo.length; i += 6) await Promise.all(todo.slice(i, i + 6).map(one));
+    // drop chart files older than the pack window that nothing points at any more
+    const keep = new Set(Object.values(PRE.items).map((e) => e.file).filter(Boolean));
+    for (const req of await c.keys()) { const m = req.url.match(/\/live\/([^/?]+\.png)$/); if (m && !keep.has(m[1])) await c.delete(req); }
+    const info = { at: Date.now(), zones, charts: files.length, mb: +(bytes / 1048576).toFixed(1), failed };
+    store.set('offPack', info); offShow();
+    if (failed) msg(`Saved ${done} files; ${failed} didn't download. Tap again with better signal to finish.`, true);
+  } catch (e) { msg(e.message, true); } finally { btn.disabled = false; }
+}
+function offShow() {
+  const p = store.get('offPack', null), el = $('offMsg'); if (!el) return;
+  el.classList.remove('err');
+  if (!p) { el.textContent = 'Nothing saved yet. Do this at the dock, on Wi-Fi.'; return; }
+  const hrs = Math.round((Date.now() - p.at) / 3600e3), names = p.zones.map((z) => BOX_LABEL[z] || z).join(', ');
+  el.innerHTML = `Saved ${new Date(p.at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })} (${hrs < 1 ? 'just now' : `${hrs} h ago`}): ${p.charts} charts, ${p.mb} MB, for ${names}.`;
+}
+$('offGo').onclick = offlinePack;
+offShow();
+// with no signal, say so once, so nobody waits on a chart that can't load
+addEventListener('offline', () => status('No signal: showing your saved charts. Weather, tides and HF radar need a connection.', true));
+
 // ---------- Find your water: search Breakline's saved charts for every patch inside your run that matches ----------
 // Runs on our own copies (checked against NOAA every 10 minutes), so it works even when NOAA is down.
 const FW_KEYS = ['depth', 'temp', 'front', 'chl', 'cur', 'mld', 'sal'];
 const FW_DEF = {
-  port: null, run: null, tempSrc: 'hourly',
+  port: null, run: null, tempSrc: 'hourly', curSrc: 'sat',
   depth: { on: true, lo: 20, hi: null }, temp: { on: true, lo: null, hi: null }, front: { on: false, mode: 'on' },
   chl: { on: false, lo: 0.08, hi: 0.4 }, cur: { on: false, lo: null, hi: 1.5 }, mld: { on: false, lo: null, hi: 150 },
   sal: { on: false, mode: 'range', lo: 35, hi: 36.5 },
@@ -3733,6 +3866,7 @@ function fwToUi() {
   });
   document.querySelectorAll('#fwTempSrc button').forEach((b) => b.classList.toggle('on', b.dataset.v === f.tempSrc));
   document.querySelector('#fwPanel .salr').hidden = f.sal.mode !== 'range';
+  $('fwCurSrc').value = f.curSrc || 'sat';
 }
 function fwFromUi() {
   const f = S.fw;
@@ -3744,6 +3878,7 @@ function fwFromUi() {
     if (el.querySelector('.mode')) c.mode = el.querySelector('.mode').value;
   });
   document.querySelector('#fwPanel .salr').hidden = f.sal.mode !== 'range';
+  f.curSrc = $('fwCurSrc').value;
   store.set('fw', f);
 }
 async function preLatestGrid(zone, key, conv) {
@@ -3804,7 +3939,7 @@ async function findWater() {
     await Promise.all([
       (on('temp') || on('front')) && (tempSrc === 'hourly' ? preGoesFill(zone) : preBlend(zone)).then((g) => { got.temp = g; }),
       on('chl') && preLatestGrid(zone, 'chl/dineof', CHL).then((g) => { got.chl = g; }),
-      on('cur') && preCurrents(zone).then((g) => { got.cur = g; }),
+      on('cur') && (f.curSrc && f.curSrc !== 'sat' ? preModelCurrents(f.curSrc, zone) : preCurrents(zone)).then((g) => { got.cur = g; }),
       on('mld') && preLatestGrid(zone, 'mld/ohc', PRODUCTS.mld.conv).then((g) => { got.mld = g; }),
       on('sal') && preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv).then((g) => { got.sal = g; }),
     ].filter(Boolean).map((p) => p.catch((e) => console.warn('find water layer', e))));
@@ -3887,7 +4022,7 @@ async function findWater() {
     const asOf = [];
     if (got.temp) asOf.push(`water temp ${tempSrc === 'hourly' ? `hourly to ${niceHour(got.temp.times[0])}` : `blend ${nice(got.temp.date)}`}`);
     if (got.chl) asOf.push(`color ${nice(got.chl.date)}`);
-    if (got.cur) asOf.push(`currents ${nice(got.cur.date)}`);
+    if (got.cur) asOf.push(`currents ${got.cur.model ? `${CUR_SRC[got.cur.model]} ${niceHour(got.cur.time)}` : `satellite ${nice(got.cur.date)}`}`);
     if (got.mld) asOf.push(`mixed layer ${nice(got.mld.date)}`);
     if (got.sal) asOf.push(`salinity ${nice(got.sal.date)}`);
     const total = areas.reduce((s, a) => s + a.nm2, 0);
