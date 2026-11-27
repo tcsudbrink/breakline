@@ -153,6 +153,26 @@ const PRODUCTS = {
     conv: (x) => (x >= 0 && x < 500 ? x * 0.032 : NaN), fmt: (v) => `${v.toFixed(1)} mg/L`,   // model gives mmol/m³; ×0.032 = mg/L
     stops: ['#4a0c2e', '#8e1b3a', '#d0453a', '#f08a3c', '#f6c95a', '#c9e27a', '#6fcf9b', '#2fa6b5', '#1f6fa8', '#1b3f7a'],
   },
+  tdep: {
+    get name() { return `Temp at depth${zlevTxt() || ' (surface, model)'}`; }, zlev: true, future: 9, unit: '°F', step: 0.5, res: 0.083, cells: 360, cm: 'thetao', sst: true,
+    conv: (c) => (c > -3 && c < 40 ? C2F(c) : NaN), fmt: (v) => `${v.toFixed(1)}°F`,
+    stops: ['#2a0a4a', '#3b1f9e', '#1d5fd6', '#14a6e0', '#1fd1b0', '#7ddc3a', '#f2e030', '#f8a22a', '#e9472a', '#b5122f', '#6e0a1e'],
+  },
+  tbot: {
+    name: 'Bottom temp (model)', future: 9, unit: '°F', step: 0.5, res: 0.083, cells: 360, cm: 'tob',
+    conv: (c) => (c > -3 && c < 40 ? C2F(c) : NaN), fmt: (v) => `${v.toFixed(1)}°F`,
+    stops: ['#2a0a4a', '#3b1f9e', '#1d5fd6', '#14a6e0', '#1fd1b0', '#7ddc3a', '#f2e030', '#f8a22a', '#e9472a', '#b5122f', '#6e0a1e'],
+  },
+  phyc: {
+    get name() { return `Plankton${zlevTxt()}`; }, zlev: true, future: 9, unit: 'mmol C/m³', step: 0.1, res: 0.25, cells: 300, cm: 'phyc', log: true,
+    conv: (x) => (x > 0 && x < 100 ? x : NaN), fmt: (v) => `${v < 1 ? v.toFixed(2) : v.toFixed(1)} mmol C/m³`,
+    stops: ['#1a1a4e', '#22407a', '#256fa0', '#2aa0a8', '#3fbf8a', '#86d25a', '#c9dc3c', '#f0c22c', '#e88a24'],
+  },
+  zsd: {
+    name: 'Water clarity (how deep you can see)', unit: 'ft', step: 1, res: 0.0417, cells: 420, cm: 'zsd',
+    conv: (m) => (m > 0 && m < 100 ? m * 3.28084 : NaN), fmt: (v) => `${Math.round(v)} ft`,
+    stops: ['#4a3a1a', '#7a6a2a', '#7f8f3a', '#4f9a5a', '#2f9a8a', '#1f86b0', '#1f62c0', '#2340a8', '#1b237a'],
+  },
   cur: {
     get name() { return S.fc ? 'Currents (ocean-model forecast)' : S.curSrc !== 'sat' ? `Currents (${CUR_SRC[S.curSrc]} ocean model)` : 'Currents (HF radar + satellite)'; }, unit: 'kt', step: 0.1, res: 0.25, computed: true,
     fmt: (v) => `${v.toFixed(2)} kt`,
@@ -1304,6 +1324,10 @@ const CM = {
   so: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m_202406/so', min: 28, max: 38, res: 0.083, model: true },
   // dissolved oxygen, mmol/m³ (Copernicus global biogeochemistry model, daily, 1/4°)
   o2: { layer: 'GLOBAL_ANALYSISFORECAST_BGC_001_028/cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m_202311/o2', min: 0, max: 350, res: 0.25, model: true },
+  thetao: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m_202406/thetao', min: -2, max: 34, res: 0.083, model: true },
+  tob: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_0.083deg_P1D-m_202406/tob', min: -2, max: 34, res: 0.083, model: true },
+  phyc: { layer: 'GLOBAL_ANALYSISFORECAST_BGC_001_028/cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m_202311/phyc', min: 0.01, max: 20, log: true, res: 0.25, model: true },
+  zsd: { layer: 'OCEANCOLOUR_GLO_BGC_L4_NRT_009_102/cmems_obs-oc_glo_bgc-transp_nrt_l4-gapfree-multi-4km_P1D_202311/ZSD', min: 0.5, max: 60, log: true, res: 0.0417 },
   // ocean-model surface currents every 6 h, analysis + ~9-day forecast (for the current and temp-drift forecasts)
   uo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/uo', min: -3, max: 3, res: 0.083, model: true },
   vo6: { layer: 'GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i_202406/vo', min: -3, max: 3, res: 0.083, model: true },
@@ -2771,12 +2795,13 @@ function updateDate() {
   } else {
     const shown = g?.date || S.date;
     $('dLabel').textContent = shown ? nice(shown) : 'Latest';
-    $('dNext').disabled = !canFc && !S.date;
+    $('dNext').disabled = PRODUCTS[S.prod].future ? (S.date || isoDate(new Date())) >= addDays(isoDate(new Date()), PRODUCTS[S.prod].future) : !canFc && !S.date;
+    if (PRODUCTS[S.prod].future && S.date > isoDate(new Date())) $('dLabel').textContent = `${nice(S.date)} (forecast)`;
     $('dLatest').hidden = !S.date;
   }
   $('dNext').title = canFc ? 'Forecast: step ahead 6 hours' : 'Next';
 }
-function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'o2', 'fish', 'ana']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
+function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'o2', 'tdep', 'tbot', 'phyc', 'zsd', 'fish', 'ana']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
 
 // ---------- Chart picker: thumbnails of every source x day for the current view ----------
 const PK = { fam: 'sst', items: [], token: 0 };
@@ -3092,8 +3117,10 @@ function stepTime(dir) {
     if (dir < 0 && next < `${ARCH_START}T00:00:00Z`) { status(`Hourly temps are saved from ${ARCH_START} on. Switch to daily Temp to go further back.`, true); return; }
     S.hour = S.latestHour && next >= S.latestHour ? null : next;
   } else {
-    const cur = S.date || g?.date; if (!cur) return;
-    const next = addDays(cur, dir); S.date = next >= isoDate(new Date()) ? null : next;
+    const cur = S.date || g?.date || isoDate(new Date()); if (!cur) return;
+    const next = addDays(cur, dir), today = isoDate(new Date());
+    if (p.future) { if (next > addDays(today, p.future)) return; S.date = next === today ? null : next; }
+    else S.date = next >= today ? null : next;
   }
   invalidateTimeData(); refresh();
 }
@@ -3129,7 +3156,7 @@ document.querySelectorAll('#curMode button').forEach((b) => {
 });
 $('zLevel').innerHTML = ZLEV.map((z, i) => `<option value="${i}">${z.l}</option>`).join('');
 $('zLevel').value = S.zlev;
-$('zLevel').onchange = () => { S.zlev = +$('zLevel').value; store.set('zlev', S.zlev); delete S.data.sss; delete S.data.o2; S.auto = true; refresh(); };
+$('zLevel').onchange = () => { S.zlev = +$('zLevel').value; store.set('zlev', S.zlev); for (const k of Object.keys(PRODUCTS)) if (PRODUCTS[k].zlev) delete S.data[k]; S.auto = true; refresh(); };
 document.querySelectorAll('#wxMode button').forEach((b) => {
   b.classList.toggle('on', b.dataset.m === S.wxMode);
   b.onclick = () => {
@@ -3946,6 +3973,343 @@ window.__S = S; window.__map = map; window.__ACCT = ACCT;
 syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
+
+// =====================================================================================================
+// Extras (v51): map overlays (protected areas, wind farms, oil rigs), satellite photo, weather radar + loop,
+// hourly playback, animated currents, print, GPX import, saved views, bite windows, trip share card, crew.
+// =====================================================================================================
+const xPane = map.createPane('xover'); xPane.style.zIndex = 455;
+const photoPane = map.createPane('photo'); photoPane.style.zIndex = 330; photoPane.style.pointerEvents = 'none';
+const radarPane = map.createPane('radar'); radarPane.style.zIndex = 440; radarPane.style.pointerEvents = 'none';
+const xRender = L.canvas({ pane: 'xover', padding: 0.3 });
+
+// ---- protected areas, wind leases + turbines, Gulf oil & gas platforms (data/overlays.json, built by build_overlays.py) ----
+let OVX = null;
+const ovxReady = () => OVX || (OVX = fetch('data/overlays.json').then((r) => r.json()).catch(() => null));
+const xLayers = { mpa: null, wind: null, rigs: null };
+const linkSafe = (u) => (/^https?:\/\//.test(u || '') ? u : null);
+async function syncXover() {
+  const want = (k) => !!S.ov[k];
+  if (!['mpa', 'wind', 'rigs'].some(want)) { for (const k in xLayers) if (xLayers[k]) map.removeLayer(xLayers[k]); return; }
+  const d = await ovxReady(); if (!d) return;
+  if (want('mpa') && !xLayers.mpa) {
+    xLayers.mpa = L.layerGroup(d.mpa.map((m) => L.polygon(m.r.map((r) => r.map(([x, y]) => [y, x])), { renderer: xRender, color: '#ff5d6c', weight: 1.4, dashArray: '5 4', fillColor: '#ff5d6c', fillOpacity: 0.08 })
+      .bindPopup(`<b>${esc(m.n || 'Protected area')}</b><br>${esc(m.f || '')}${m.p ? `<br><small>${esc(m.p)}${m.c ? ` · ${esc(m.c)}` : ''}</small>` : ''}${m.a ? `<br><small>${esc(m.a)}</small>` : ''}${linkSafe(m.u) ? `<br><a href="${esc(m.u)}" target="_blank" rel="noopener">Rules for this area</a>` : ''}<br><small>Check current regulations before fishing. Not for navigation.</small>`)));
+  }
+  if (want('wind') && !xLayers.wind) {
+    xLayers.wind = L.layerGroup([
+      ...d.wind.map((w) => L.polygon(w.r.map((r) => r.map(([x, y]) => [y, x])), { renderer: xRender, color: '#b48cff', weight: 1.2, fillColor: '#b48cff', fillOpacity: 0.06 }).bindPopup(`<b>Offshore wind lease</b><br>${esc(w.n)}`)),
+      ...d.turbines.map(([x, y, n]) => L.circleMarker([y, x], { renderer: xRender, radius: 3, color: '#fff', weight: 1, fillColor: '#b48cff', fillOpacity: 1 }).bindTooltip(`Wind turbine${n ? `: ${esc(n)}` : ''}`)),
+    ]);
+  }
+  if (want('rigs') && !xLayers.rigs) {
+    xLayers.rigs = L.layerGroup(d.platforms.map(([x, y, id]) => L.circleMarker([y, x], { renderer: xRender, radius: 3, color: '#2b1a00', weight: 1, fillColor: '#ffae3d', fillOpacity: 1 })
+      .bindTooltip(`Oil & gas platform${id ? ` (complex ${id})` : ''}`)));
+  }
+  for (const k in xLayers) if (xLayers[k]) { if (want(k) && !map.hasLayer(xLayers[k])) xLayers[k].addTo(map); if (!want(k) && map.hasLayer(xLayers[k])) map.removeLayer(xLayers[k]); }
+}
+
+// ---- satellite photo (true color, NASA GIBS: VIIRS on NOAA-20 / Suomi NPP, one picture a day) ----
+let photoLayer = null, photoKey = '';
+function photoDay() {
+  if (S.date) return S.date;
+  return addDays(isoDate(new Date()), -1);   // NASA finishes processing a day's Americas passes overnight, so yesterday is the newest complete picture
+}
+function syncPhoto() {
+  const on = !!S.ov.photo, key = `${S.ov.photoSat || 'n20'}|${photoDay()}`;
+  if (photoLayer && (!on || key !== photoKey)) { map.removeLayer(photoLayer); photoLayer = null; }
+  if (!on || photoLayer) return;
+  const lyr = (S.ov.photoSat || 'n20') === 'snpp' ? 'VIIRS_SNPP_CorrectedReflectance_TrueColor' : 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+  photoKey = key;
+  photoLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${lyr}/default/${photoDay()}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`,
+    { pane: 'photo', maxNativeZoom: 9, maxZoom: 16, opacity: 0.9, attribution: 'NASA GIBS / VIIRS' }).addTo(map);
+  status(`Satellite photo: ${nice(photoDay())} (${(S.ov.photoSat || 'n20') === 'snpp' ? 'Suomi NPP' : 'NOAA-20'} VIIRS, one daytime pass). Clouds are white; green and brown water is color you can fish an edge on.`);
+}
+
+// ---- weather radar (US NEXRAD composite via Iowa Environmental Mesonet; reaches ~100-150 nm offshore) ----
+const RADAR_FRAMES = ['m50m', 'm45m', 'm40m', 'm35m', 'm30m', 'm25m', 'm20m', 'm15m', 'm10m', 'm05m', ''];
+const radarUrl = (f) => `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913${f ? `-${f}` : ''}/{z}/{x}/{y}.png`;
+let radarLayer = null, radarLoop = null, radarTick = null;
+function syncRadar() {
+  if (!S.ov.radar) { if (radarLayer) map.removeLayer(radarLayer); radarLayer = null; radarStop(); clearInterval(radarTick); radarTick = null; $('radarPlay').hidden = true; return; }
+  $('radarPlay').hidden = false;
+  if (!radarLayer) radarLayer = L.tileLayer(radarUrl(''), { pane: 'radar', opacity: 0.7, maxNativeZoom: 10, maxZoom: 16, attribution: 'NEXRAD via Iowa Env. Mesonet' }).addTo(map);
+  if (!radarTick) radarTick = setInterval(() => { if (radarLayer && !radarLoop) radarLayer.setUrl(`${radarUrl('')}?t=${Math.floor(Date.now() / 300000)}`); }, 300000);
+}
+function radarStop() { if (!radarLoop) return; clearInterval(radarLoop.t); radarLoop.layers.forEach((l) => map.removeLayer(l)); radarLoop = null; if (radarLayer) radarLayer.setOpacity(0.7); $('radarPlay').textContent = '▶ Radar loop (last 50 min)'; }
+function radarPlay() {
+  if (radarLoop) { radarStop(); return; }
+  const layers = RADAR_FRAMES.map((f) => L.tileLayer(radarUrl(f), { pane: 'radar', opacity: 0, maxNativeZoom: 10, maxZoom: 16 }).addTo(map));
+  if (radarLayer) radarLayer.setOpacity(0);
+  let i = 0; radarLoop = { layers, t: setInterval(() => {
+    layers.forEach((l, k) => l.setOpacity(k === i ? 0.7 : 0));
+    status(i === layers.length - 1 ? 'Radar: now' : `Radar: ${RADAR_FRAMES[i].replace('m', '').replace('m', '')} min ago`);
+    i = (i + 1) % layers.length;
+  }, 700) };
+  $('radarPlay').textContent = '■ Stop radar loop';
+}
+
+// ---- hourly playback: step through the last 24 saved hours like a movie ----
+let PLAY = null;
+function playStop() { if (!PLAY) return; clearTimeout(PLAY.t); PLAY = null; $('dPlay').textContent = '▶'; $('dPlay').title = 'Play the last 24 hours'; }
+async function playHourly() {
+  if (PLAY) { playStop(); return; }
+  if (S.prod !== 'goes') { document.querySelector('[data-prod="goes"]')?.click(); await new Promise((r) => setTimeout(r, 400)); }
+  const hours = goesHours().slice(-24); if (hours.length < 2) { status('Not enough saved hours here to play.', true); return; }
+  PLAY = { i: 0 }; $('dPlay').textContent = '■'; $('dPlay').title = 'Stop';
+  const step = async () => {
+    if (!PLAY) return;
+    const h = hours[PLAY.i]; S.hour = PLAY.i === hours.length - 1 ? null : h;
+    invalidateTimeData(); await refresh();
+    if (!PLAY) return;
+    PLAY.i = (PLAY.i + 1) % hours.length;
+    PLAY.t = setTimeout(step, PLAY.i === 0 ? 2500 : 900);
+  };
+  step();
+}
+
+// ---- animated currents: particles drift with the same currents the arrows use (curAt) ----
+const flowCv = L.DomUtil.create('canvas', 'flow-canvas'); flowCv.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:445';
+map.getContainer().appendChild(flowCv);
+let FLOW = null;
+function flowSize() { const sz = map.getSize(), r = devicePixelRatio || 1; flowCv.width = sz.x * r; flowCv.height = sz.y * r; flowCv.style.width = `${sz.x}px`; flowCv.style.height = `${sz.y}px`; flowCv.getContext('2d').setTransform(r, 0, 0, r, 0, 0); }
+function flowStart() {
+  if (FLOW) return; flowSize();
+  const sz = map.getSize(), N = Math.round(Math.min(2600, sz.x * sz.y / 260));
+  const P = Array.from({ length: N }, () => ({ x: Math.random() * sz.x, y: Math.random() * sz.y, age: Math.random() * 80 }));
+  FLOW = { P, raf: 0 };
+  const ctx = flowCv.getContext('2d');
+  const frame = () => {
+    if (!FLOW) return;
+    const s2 = map.getSize();
+    ctx.globalCompositeOperation = 'destination-in'; ctx.fillStyle = 'rgba(0,0,0,0.9)'; ctx.fillRect(0, 0, s2.x, s2.y);
+    ctx.globalCompositeOperation = 'source-over'; ctx.lineWidth = 1.3;
+    const k = 3.2;                                          // screen pixels per frame for 1 m/s (~2 kt): same feel at every zoom
+    for (const p of P) {
+      const ll = map.containerPointToLatLng([p.x, p.y]), c = curAt(ll.lat, ll.lng);
+      if (!c || p.age > 90) { p.x = Math.random() * s2.x; p.y = Math.random() * s2.y; p.age = 0; continue; }
+      const sp = Math.hypot(c[0], c[1]), nx = p.x + c[0] * k, ny = p.y - c[1] * k;
+      ctx.strokeStyle = sp > 1.0 ? 'rgba(255,120,90,0.9)' : sp > 0.5 ? 'rgba(255,230,120,0.85)' : 'rgba(220,240,255,0.75)';
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(nx, ny); ctx.stroke();
+      p.x = nx; p.y = ny; p.age++;
+      if (p.x < 0 || p.y < 0 || p.x > s2.x || p.y > s2.y) { p.x = Math.random() * s2.x; p.y = Math.random() * s2.y; p.age = 0; }
+    }
+    FLOW.raf = requestAnimationFrame(frame);
+  };
+  frame();
+}
+function flowStop() { if (!FLOW) return; cancelAnimationFrame(FLOW.raf); FLOW = null; flowCv.getContext('2d').clearRect(0, 0, flowCv.width, flowCv.height); }
+function syncFlow() {
+  if (!S.ov.flow) { flowStop(); return; }
+  if (!S.data.curb && !S.data.hf) { S.ov.cur = true; store.set('ov', S.ov); refresh(); }    // needs currents loaded
+  flowStart();
+}
+map.on('movestart zoomstart', () => { if (FLOW) { flowStop(); FLOW = null; } });
+map.on('moveend zoomend resize', () => { if (S.ov.flow) { flowSize(); flowStart(); } });
+
+// ---- one listener for the new Layers checkboxes ----
+document.querySelectorAll('#layers [data-ov]').forEach((cb) => cb.addEventListener('change', () => {
+  const k = cb.dataset.ov;
+  if (['mpa', 'wind', 'rigs'].includes(k)) syncXover();
+  if (k === 'photo') syncPhoto();
+  if (k === 'radar') syncRadar();
+  if (k === 'flow') syncFlow();
+}));
+$('photoSat').value = S.ov.photoSat || 'n20';
+$('photoSat').onchange = () => { S.ov.photoSat = $('photoSat').value; store.set('ov', S.ov); syncPhoto(); };
+$('radarPlay').onclick = radarPlay;
+$('dPlay').onclick = playHourly;
+syncXover(); syncPhoto(); syncRadar(); if (S.ov.flow) setTimeout(syncFlow, 3000);
+
+// ---- print this chart ----
+$('printChart').onclick = () => { $('layers').hidden = true; document.body.classList.add('printing'); setTimeout(() => { window.print(); document.body.classList.remove('printing'); }, 300); };
+
+// ---- GPX import (Garmin, Simrad/Lowrance, Raymarine, Furuno and Navionics all export GPX) ----
+$('wGpxIn').onchange = async () => {
+  const f = $('wGpxIn').files[0]; if (!f) return;
+  const doc = new DOMParser().parseFromString(await f.text(), 'application/xml');
+  const pts = [...doc.querySelectorAll('wpt')].map((w) => ({ lat: +w.getAttribute('lat'), lon: +w.getAttribute('lon'), name: (w.querySelector('name')?.textContent || '').trim(), note: (w.querySelector('desc,cmt')?.textContent || '').trim() }))
+    .filter((p) => p.lat === p.lat && p.lon === p.lon && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
+  const have = new Set(S.wpts.map((w) => `${w.lat.toFixed(5)},${w.lon.toFixed(5)}`));
+  let n = 0;
+  for (const p of pts) {
+    if (have.has(`${p.lat.toFixed(5)},${p.lon.toFixed(5)}`)) continue;
+    S.wpts.push({ name: (p.name || `Spot ${S.wpts.length + 1}`).slice(0, 80), lat: p.lat, lon: p.lon, note: p.note ? p.note.slice(0, 500) : undefined }); n++;
+  }
+  $('wGpxIn').value = '';
+  if (n) { saveWpts(); status(`Imported ${n} spot${n === 1 ? '' : 's'} from ${f.name}${pts.length > n ? ` (${pts.length - n} already here)` : ''}.`); }
+  else status(pts.length ? 'Those spots are already in your list.' : 'No waypoints found in that file.', true);
+};
+
+// ---- saved views: layer + source + overlays + depth + where you were looking, one tap to bring back ----
+function viewsUi() {
+  const v = store.get('views', []);
+  $('viewList').innerHTML = v.map((x, i) => `<li><button class="ghost" data-i="${i}">${esc(x.name)}</button><button class="x" data-del="${i}" title="Delete">&times;</button></li>`).join('') || '<li><small>None yet.</small></li>';
+}
+$('viewSave').onclick = () => {
+  const name = prompt('Name this view:', `${PRODUCTS[S.prod].name.split(' ·')[0]} · ${map.getZoom() >= 8 ? 'zoomed in' : 'wide'}`); if (!name) return;
+  const v = store.get('views', []);
+  v.push({ name: name.slice(0, 60), prod: S.prod, src: { ...S.src }, ov: { ...S.ov }, zlev: S.zlev || 0, c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom(), species: S.species });
+  store.set('views', v.slice(-30)); viewsUi();
+};
+$('viewList').onclick = (ev) => {
+  const v = store.get('views', []), del = ev.target.dataset.del, i = ev.target.dataset.i;
+  if (del != null) { v.splice(+del, 1); store.set('views', v); viewsUi(); return; }
+  if (i == null) return; const x = v[+i]; if (!x) return;
+  Object.assign(S.src, x.src); Object.assign(S.ov, x.ov); store.set('ov', S.ov); S.zlev = x.zlev || 0; if (x.species) S.species = x.species;
+  document.querySelectorAll('#layers [data-ov]').forEach((cb) => { cb.checked = !!S.ov[cb.dataset.ov]; });
+  map.setView(x.c, x.z); syncXover(); syncPhoto(); syncRadar(); syncFlow(); syncEnc();
+  document.querySelector(`[data-prod="${x.prod}"]`)?.click();
+};
+viewsUi();
+
+// ---- bite windows on each saved spot (solunar majors/minors, best with sunrise/sunset) ----
+function nextBite(lat, lon) {
+  const now = Date.now(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const wins = [0, 1].flatMap((d) => Solunar.summary(t0.getTime() + d * 864e5, lat, lon, []).windows).filter((w) => w.b > now).sort((a, b) => a.a - b.a);
+  const w = wins.find((x) => x.score >= 3) || wins[0]; if (!w) return '';
+  const tm = (t) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const day = new Date(w.a).toDateString() === new Date().toDateString() ? '' : 'tomorrow ';
+  return `Next bite window: ${w.a <= now ? 'now until ' + tm(w.b) : `${day}${tm(w.a)}-${tm(w.b)}`}${w.kind === 'major' ? ' (major' : ' (minor'}${w.tags.length ? `, ${w.tags[0]}` : ''})`;
+}
+const _drawWpts = drawWpts;
+drawWpts = function () {
+  _drawWpts();
+  $('wList').querySelectorAll('li').forEach((li, i) => {
+    const w = S.wpts[i]; if (!w) return;
+    const sm = li.querySelector('small'), b = nextBite(w.lat, w.lon);
+    if (sm && b) sm.insertAdjacentHTML('beforeend', `<br><span class="bite">${esc(b)}</span>`);
+    const share = document.createElement('button'); share.className = 'x share'; share.title = 'Share with my crew'; share.textContent = '↗';
+    share.onclick = (ev) => { ev.stopPropagation(); crewShareSpot(w); };
+    li.appendChild(share);
+  });
+};
+drawWpts();
+
+// ---- trip share card: a picture of your track and the day's numbers, for texts and social ----
+async function tripCard(t) {
+  const W = 1080, H = 1080, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d');
+  const gr = c.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#06172a'); gr.addColorStop(1, '#0b2c4a'); c.fillStyle = gr; c.fillRect(0, 0, W, H);
+  const pts = t.pts.map((p) => [p[1], p[2]]), la = pts.map((p) => p[0]), lo = pts.map((p) => p[1]);
+  const s = Math.min(...la), n = Math.max(...la), w = Math.min(...lo), e = Math.max(...lo), kx = Math.cos((s + n) / 2 * Math.PI / 180);
+  const span = Math.max((n - s), (e - w) * kx, 0.01), sc = 760 / span, cx = (w + e) / 2, cy = (s + n) / 2;
+  const P = ([a, b]) => [W / 2 + (b - cx) * kx * sc, 520 - (a - cy) * sc];
+  c.strokeStyle = 'rgba(53,194,255,0.18)'; c.lineWidth = 1; for (let x = 0; x < W; x += 60) { c.beginPath(); c.moveTo(x, 120); c.lineTo(x, 920); c.stroke(); }
+  c.strokeStyle = '#35c2ff'; c.lineWidth = 6; c.lineJoin = 'round'; c.beginPath(); pts.forEach((p, i) => { const [x, y] = P(p); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke();
+  const fish = S.catches.filter((x) => x.trip_id === t.id && !x.deleted);
+  c.fillStyle = '#ffd24a'; for (const f of fish) { const [x, y] = P([f.lat, f.lon]); c.beginPath(); c.arc(x, y, 14, 0, 7); c.fill(); }
+  const [sx, sy] = P(pts[0]); c.fillStyle = '#7dffb0'; c.beginPath(); c.arc(sx, sy, 12, 0, 7); c.fill();
+  const nm = tripNm(t.pts), dur = hhmm((t.end || Date.now()) - t.start), nF = fish.reduce((a, f) => a + f.n, 0);
+  const bySp = {}; for (const f of fish) bySp[spLabel(f.species)] = (bySp[spLabel(f.species)] || 0) + f.n;
+  c.fillStyle = '#fff'; c.font = '800 54px system-ui, sans-serif'; c.fillText(new Date(t.start).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }), 60, 90);
+  c.font = '700 40px system-ui, sans-serif'; c.fillStyle = '#cfe9ff';
+  c.fillText(`${nm.toFixed(1)} nm · ${dur} on the water${nF ? ` · ${nF} fish` : ''}`, 60, 990);
+  c.font = '500 32px system-ui, sans-serif'; c.fillStyle = '#ffd24a';
+  c.fillText(Object.entries(bySp).map(([k, v]) => `${v} ${k}`).join(' · ').slice(0, 60), 60, 1040);
+  c.textAlign = 'right'; c.fillStyle = '#35c2ff'; c.font = '800 34px system-ui, sans-serif'; c.fillText('breaklinefishing.com', W - 60, 1040);
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+  const file = new File([blob], `breakline-trip-${isoDate(new Date(t.start))}.png`, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: 'My day on the water' }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+}
+$('tripShare').onclick = () => { if (TRIP.review?.pts?.length > 1) tripCard(TRIP.review); else status('No track to share yet.', true); };
+
+// ---- clear-view alert: email me when the satellite gets a clear look at my run ----
+$('fwClear').onclick = async () => {
+  const sb = ACCT.sb; if (!sb || !ACCT.user) { $('fwMsg').textContent = 'Sign in to save alerts.'; return; }
+  const c = fwCriteria(), port = c.port || S.home;
+  const pct = +prompt('Email me when the hourly satellite can see at least this % of the water in my run (clouds block the rest):', '60'); if (!pct) return;
+  const row = { id: newId(), user_id: ACCT.user.id, name: `Clear view within ${Math.round(c.run)} nm of ${port}`.slice(0, 140),
+    criteria: { kind: 'clear', run: c.run, port, portLat: c.portLat, portLon: c.portLon, minClear: Math.max(10, Math.min(100, pct)) }, min_nm2: 1 };
+  const { error } = await sb.from('water_alerts').insert(row);
+  if (error) { $('fwMsg').textContent = `Couldn't save the alert: ${error.message}`; $('fwMsg').classList.add('err'); return; }
+  $('fwMsg').classList.remove('err'); $('fwMsg').innerHTML = `Saved. You'll get an email at ${esc(ACCT.user.email)} when ${pct}% of your run is clear on the hourly satellite (at most every 6 hours).`;
+  fetch('/api/check-alerts', { method: 'POST' }).then(() => setTimeout(alertsLoad, 1500)).catch(() => {});
+  alertsLoad();
+};
+
+// ---- crew: share spots and boat positions with the people you fish with (supabase/crew.sql) ----
+const CREW = { list: [], cur: store.get('crew', null), spots: [], boats: [], layer: L.layerGroup().addTo(map), timer: null, sharing: store.get('crewShare', false), lastPos: 0 };
+function crewMsg(t, err) { $('crewMsg').textContent = t; $('crewMsg').classList.toggle('err', !!err); }
+async function crewLoad() {
+  const sb = ACCT.sb; if (!sb || !ACCT.user) { $('crewBox').hidden = true; $('crewSignin').hidden = false; return; }
+  $('crewBox').hidden = false; $('crewSignin').hidden = true;
+  const { data, error } = await sb.from('crew_members').select('crew_id, name, crews(id, name, code, owner)').eq('user_id', ACCT.user.id);
+  if (error) { crewMsg(/relation|does not exist|schema cache/i.test(error.message) ? 'Crew is not switched on yet (the database tables need to be added).' : error.message, true); return; }
+  CREW.list = (data || []).map((r) => r.crews).filter(Boolean);
+  if (!CREW.list.find((c) => c.id === CREW.cur)) CREW.cur = CREW.list[0]?.id || null;
+  store.set('crew', CREW.cur);
+  $('crewSel').innerHTML = CREW.list.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('crewSel').value = CREW.cur || ''; $('crewHave').hidden = !CREW.list.length;
+  $('crewShareCb').checked = CREW.sharing;
+  await crewPull();
+}
+async function crewPull() {
+  const sb = ACCT.sb; if (!sb || !CREW.cur) { CREW.layer.clearLayers(); $('crewInfo').textContent = ''; return; }
+  const c = CREW.list.find((x) => x.id === CREW.cur);
+  const [m, sp, bo] = await Promise.all([
+    sb.from('crew_members').select('user_id, name').eq('crew_id', CREW.cur),
+    sb.from('crew_spots').select('*').eq('crew_id', CREW.cur).is('deleted_at', null).order('created_at', { ascending: false }).limit(300),
+    sb.from('crew_pos').select('*').eq('crew_id', CREW.cur),
+  ]);
+  CREW.spots = sp.data || []; CREW.boats = (bo.data || []).filter((b) => b.user_id !== ACCT.user.id && Date.now() - Date.parse(b.at) < 6 * 3600e3);
+  $('crewInfo').innerHTML = `Join code <b>${esc(c?.code || '')}</b> · ${(m.data || []).map((x) => esc(x.name || 'crew')).join(', ')}`;
+  CREW.layer.clearLayers();
+  for (const s of CREW.spots) L.marker([s.lat, s.lon], { icon: L.divIcon({ className: '', html: '<div class="crew-spot"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) })
+    .bindTooltip(`${esc(s.name)}<br><small>from ${esc(s.by_name || 'crew')}</small>`).bindPopup(`<b>${esc(s.name)}</b><br>${fmtLL(s.lat, s.lon)}${s.note ? `<br><i>${esc(s.note)}</i>` : ''}<br><small>Shared by ${esc(s.by_name || 'crew')} ${new Date(s.created_at).toLocaleDateString()}</small>`).addTo(CREW.layer);
+  for (const b of CREW.boats) {
+    const mins = Math.round((Date.now() - Date.parse(b.at)) / 60000);
+    L.marker([b.lat, b.lon], { icon: L.divIcon({ className: '', html: `<div class="crew-boat" style="transform:rotate(${b.cog || 0}deg)"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] }) })
+      .bindTooltip(`${esc(b.name || 'Crew boat')} · ${mins < 2 ? 'now' : `${mins} min ago`}${b.sog != null ? ` · ${(+b.sog).toFixed(1)} kt` : ''}`, { permanent: true, direction: 'right', offset: [10, 0], className: 'wpt-label' }).addTo(CREW.layer);
+  }
+}
+function crewName() { return (ACCT.user?.user_metadata?.first_name || ACCT.user?.email?.split('@')[0] || 'crew').slice(0, 40); }
+$('crewCreate').onclick = async () => {
+  const name = prompt('Name your crew (your boat name works):'); if (!name) return;
+  const { data, error } = await ACCT.sb.rpc('crew_create', { p_name: name.slice(0, 60), p_member: crewName() });
+  if (error) { crewMsg(error.message, true); return; }
+  CREW.cur = data; store.set('crew', CREW.cur); crewMsg('Crew made. Give your crew the join code below.'); crewLoad();
+};
+$('crewJoin').onclick = async () => {
+  const code = prompt('Join code from your captain:'); if (!code) return;
+  const { data, error } = await ACCT.sb.rpc('crew_join', { p_code: code.trim().toUpperCase(), p_member: crewName() });
+  if (error) { crewMsg(/no crew/i.test(error.message) ? 'No crew with that code.' : error.message, true); return; }
+  CREW.cur = data; store.set('crew', CREW.cur); crewMsg('You are in.'); crewLoad();
+};
+$('crewLeave').onclick = async () => {
+  if (!CREW.cur || !confirm('Leave this crew? Spots you shared stay with them.')) return;
+  await ACCT.sb.from('crew_members').delete().eq('crew_id', CREW.cur).eq('user_id', ACCT.user.id);
+  await ACCT.sb.from('crew_pos').delete().eq('crew_id', CREW.cur).eq('user_id', ACCT.user.id);
+  CREW.cur = null; crewLoad();
+};
+$('crewSel').onchange = () => { CREW.cur = $('crewSel').value; store.set('crew', CREW.cur); crewPull(); };
+$('crewShareCb').onchange = () => {
+  CREW.sharing = $('crewShareCb').checked; store.set('crewShare', CREW.sharing);
+  if (CREW.sharing && !ME.pos) { if (ME.watch == null) { startLocate(); paintLocate(); } crewMsg('Sharing starts once your GPS has a fix. Keep Breakline open on the water.'); }
+  if (!CREW.sharing && CREW.cur) ACCT.sb.from('crew_pos').delete().eq('crew_id', CREW.cur).eq('user_id', ACCT.user.id);
+};
+async function crewShareSpot(w) {
+  if (!ACCT.user) { status('Sign in to share spots with a crew.', true); return; }
+  if (!CREW.cur) { status('Make or join a crew first (Spots > Crew).', true); $('btnWpts')?.click(); return; }
+  const { error } = await ACCT.sb.from('crew_spots').insert({ id: newId(), crew_id: CREW.cur, user_id: ACCT.user.id, by_name: crewName(), name: w.name.slice(0, 80), lat: w.lat, lon: w.lon, note: w.note?.slice(0, 500) || null });
+  status(error ? `Couldn't share: ${error.message}` : `Shared "${w.name}" with ${CREW.list.find((c) => c.id === CREW.cur)?.name || 'your crew'}.`, !!error);
+  if (!error) crewPull();
+}
+let crewPrev = null;
+async function crewTick() {
+  if (!ACCT.user || !CREW.cur) return;
+  if (CREW.sharing && ME.pos && Date.now() - CREW.lastPos > 55e3) {
+    let sog = null, cog = null;
+    if (crewPrev) { const [d, b] = rangeBearing(crewPrev.p, ME.pos), h = (Date.now() - crewPrev.t) / 3600e3; if (h > 0) { sog = +(d / h).toFixed(1); cog = Math.round(b); } }
+    crewPrev = { p: ME.pos.slice ? ME.pos.slice() : [ME.pos.lat, ME.pos.lng], t: Date.now() };
+    const [la, lo] = Array.isArray(ME.pos) ? ME.pos : [ME.pos.lat, ME.pos.lng];
+    await ACCT.sb.from('crew_pos').upsert({ crew_id: CREW.cur, user_id: ACCT.user.id, name: crewName(), lat: +la.toFixed(5), lon: +lo.toFixed(5), sog, cog, at: new Date().toISOString() });
+    CREW.lastPos = Date.now();
+  }
+  crewPull();
+}
+CREW.timer = setInterval(crewTick, 60e3);
+setTimeout(crewLoad, 2500);
 // a tapped reading's popup sits in front of the bottom readout + legend (on phones they cover its Save row)
 map.on('popupopen', () => document.body.classList.add('pp-open'));
 map.on('popupclose', () => document.body.classList.remove('pp-open'));
@@ -4042,6 +4406,35 @@ const LAYER_GUIDE = {
       'The edge of a river plume (the Mississippi, the Chesapeake, the Amazon water that reaches the Caribbean) gathers weed, bait and mahi. Fish the salty side.',
       'At depth: salty water under the surface often marks where the Gulf Stream or an eddy really is, even when the surface has been mixed by wind.'],
     watch: 'The satellite is coarse (about 25 km) and cannot read close to land, so it misses small inlet and sound outflows. Use it for the big picture, then fine-tune on temp and color.',
+  },
+  tdep: {
+    what: 'Water temperature below the surface, from the Copernicus ocean model (about 5 mi detail, daily). Pick a depth with the Depth button. Tap ▶ on the date bar to see the model forecast up to 9 days ahead.',
+    good: ['The thermocline: where the temp drops fast between two depths is where bait and gamefish hold. Compare 50, 100 and 150 ft.',
+      'Tuna and billfish feed under warm surface water as long as the water below stays in their range: yellowfin and bigeye range much deeper than mahi or sailfish.',
+      'A warm eddy that is deep (still warm at 300 ft) holds fish longer than a thin warm skin that the wind can mix away.',
+      'Use the forecast days to see where a break or eddy is heading before your trip.'],
+    watch: 'This is a model, not a satellite picture: it is smoother than the real ocean and can place an edge a few miles off. Use the satellite Temp chart for exact breaks at the surface.',
+  },
+  tbot: {
+    what: 'Water temperature right on the bottom, from the Copernicus ocean model, daily, with a 9-day forecast.',
+    good: ['Bottom fish (sea bass, tilefish, grouper, snapper, flounder, fluke) move with bottom temps, not surface temps.',
+      'Cold bottom water pushing onto the shelf (a "cold pool") moves fluke, sea bass and tautog. Fish the warm side of it.',
+      'In the fall, the first warm-to-cool change on the bottom starts the inshore-to-offshore migration of many bottom species.'],
+    watch: 'A model at about 5 mi detail. Over rough ledges and canyon walls the real bottom temp changes faster than the chart shows.',
+  },
+  phyc: {
+    what: 'Phytoplankton (the tiny plants at the base of the food chain), as carbon in the water, from the Copernicus biogeochemistry model. Daily, with a 9-day forecast, and depth levels.',
+    good: ['Plankton feeds the bait, and the bait feeds the fish. Edges between rich (green and yellow) and poor (blue) water are where bait stacks up.',
+      'Below the surface, a "deep plankton layer" at 100-200 ft often holds bait that sonar shows but the satellite color chart cannot see.',
+      'Use it with Color (chlorophyll): when clouds block the satellites, this model still gives you the picture.'],
+    watch: 'A model at about 15 mi detail. The satellite Color chart is sharper whenever it has a clear view.',
+  },
+  zsd: {
+    what: 'How deep you could see a white disk in the water (Secchi depth), in feet, from Copernicus satellites, gap-filled daily. Deep blue water reads 60-150+ ft, green shelf water 10-40 ft.',
+    good: ['Billfish, tuna and wahoo hunt by sight: the clear blue side of a clarity edge is where to troll.',
+      'The sharp line where clear and murky water meet is a rip: bait, weed and mahi collect on it.',
+      'Inshore, a little stain (10-25 ft) is good for stripers, reds and trout; gin-clear water makes them shy.'],
+    watch: 'Gap-filled from about 3 mi satellite readings, so very new edges after a storm can lag by a day.',
   },
   o2: {
     what: 'Dissolved oxygen in the water, in mg/L, from the Copernicus ocean model (an estimate, not a measurement). Use the depth buttons to look below the surface: the surface is almost always well oxygenated, so the deeper levels are where this layer earns its keep.',
@@ -4184,11 +4577,13 @@ function alertsUi() {
   $('fwAlertsHdr').hidden = !S.alerts.length;
   el.innerHTML = S.alerts.map((a) => {
     const m = a.last_match, when = a.last_checked ? new Date(a.last_checked).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'not yet';
-    const st = !a.active ? 'Paused' : m ? `<b class="ok">Matching now</b>: ${m.nm2.toLocaleString()} sq nm, biggest ${m.dist} nm @ ${m.brg}°T` : `Not showing yet (checked ${when})`;
+    const st = !a.active ? 'Paused' : a.criteria?.kind === 'clear' ? (m ? `<b class="ok">Clear now</b>: ${m.pct}% of your run` : `Cloudy for now (checked ${when})`)
+      : m ? `<b class="ok">Matching now</b>: ${m.nm2.toLocaleString()} sq nm, biggest ${m.dist} nm @ ${m.brg}°T` : `Not showing yet (checked ${when})`;
     return `<li data-id="${a.id}"><b>${esc(a.name)}</b><small>${st}</small><div class="row"><button class="ghost al-show">Show</button><button class="ghost al-pause">${a.active ? 'Pause' : 'Resume'}</button><button class="ghost al-del">Delete</button></div></li>`;
   }).join('');
 }
 async function alertShow(a) {
+  if (a.criteria?.kind === 'clear') { map.setView([a.criteria.portLat, a.criteria.portLon], 7); S.hour = null; document.querySelector('[data-prod="goes"]')?.click(); return; }
   S.fw = { ...FW_DEF, ...JSON.parse(JSON.stringify(a.criteria)) };
   for (const k of FW_KEYS) S.fw[k] = { ...FW_DEF[k], ...(a.criteria[k] || {}) };
   store.set('fw', S.fw); fwToUi();

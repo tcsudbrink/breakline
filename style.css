@@ -417,3 +417,22 @@ body.gated #rail, body.gated #topLeft, body.gated #datebar { visibility: hidden;
 
 /* phones: an open popup goes in front of the location readout and legend (Leaflet's popup pane is z 700) */
 @media (max-width: 700px) { body.pp-open #foot { z-index: 650; } }
+
+/* v51 extras */
+.btnlike { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+#wList .bite { color: #9be7a6; }
+#wList li { grid-template-columns: 1fr auto auto; }
+#wList li button.share { grid-column: 2; color: #46e08a; }
+#wList li button[title="Delete"] { grid-column: 3; }
+.view-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.view-list li { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+.view-list li button.ghost { flex: 1; text-align: left; }
+.crew-spot { width: 12px; height: 12px; background: #46e08a; border: 2px solid #06281a; transform: rotate(45deg); }
+.crew-boat { width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 18px solid #46e08a; filter: drop-shadow(0 0 2px #000); }
+#crewMsg.err { color: #ff8a8a; }
+@media print {
+  #rail, #topLeft, #status, #datebar, .panel, .leaflet-control-container, #layerInfo, #readout, #tripChip, #picker, .modebar, #wxMode { display: none !important; }
+  #map { inset: 0 !important; }
+  #foot { position: fixed; bottom: 0; left: 0; right: 0; }
+  body { background: #fff; }
+}

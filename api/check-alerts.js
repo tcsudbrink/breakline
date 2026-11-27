@@ -177,6 +177,32 @@ async function matchAlert(man, c) {
   return { match: { nm2: Math.round(total), patches, biggest: Math.round(best.a), lat: +best.lat.toFixed(4), lon: +best.lon.toFixed(4), dist: Math.round(dist), brg: Math.round(brg), asof } };
 }
 
+// "Clear view" alerts: tell me when the newest hourly satellite look over my run is mostly cloud-free.
+// Match = the newest saved GOES hour with at least c.minClear % of the water inside the run circle readable.
+async function clearMatch(man, c) {
+  const R = Math.max(5, Math.min(400, +c.run || 60)), pla = +c.portLat, plo = +c.portLon;
+  if (!(pla === pla && plo === plo)) throw new Error('alert has no port position');
+  const zs = Object.entries(man.zones).filter(([, b]) => pla >= b.s && pla <= b.n && plo >= b.w && plo <= b.e)
+    .sort((a, b) => (a[1].n - a[1].s) * (a[1].e - a[1].w) - (b[1].n - b[1].s) * (b[1].e - b[1].w));
+  if (!zs.length) return { none: 'no hourly charts there' };
+  const zone = zs[0][0], items = man.items;
+  const k = Object.keys(items).filter((x) => x.startsWith(`${zone}/goes/`) && items[x].file).sort().pop();
+  if (!k) return { none: 'no hourly charts yet' };
+  const g = await grid(man, items[k], SST_C), bathy = await bathyFor({ s: pla - R / 60, n: pla + R / 60, w: plo - R / 45, e: plo + R / 45 });
+  let water = 0, clear = 0;
+  for (let j = 0; j < g.ny; j++) {
+    const la = g.lat0 + j * g.dlat;
+    for (let i = 0; i < g.nx; i++) {
+      const lo = g.lon0 + i * g.dlon;
+      if (rangeBearing([pla, plo], [la, lo])[0] > R) continue;
+      const z = bathy ? sample(bathy, la, lo) : -1; if (!(z < 0)) continue;    // sea only
+      water++; if (g.v[j * g.nx + i] === g.v[j * g.nx + i]) clear++;
+    }
+  }
+  const pct = water ? Math.round(100 * clear / water) : 0, hour = k.split('/')[2];
+  return { match: pct >= (+c.minClear || 50) ? { pct, hour, asof: hour } : null, pct, hour };
+}
+
 export async function POST() {
   if (!env.SUPABASE_SECRET_KEY) return json({ error: 'not_configured' }, 503);
   const since = new Date(Date.now() - 4 * 60e3).toISOString();
@@ -186,12 +212,27 @@ export async function POST() {
   let sent = 0; const out = [];
   for (const a of alerts) {
     try {
-      const r = await matchAlert(man, a.criteria), m = r.match && r.match.nm2 >= (a.min_nm2 || 5) ? r.match : null, now = new Date().toISOString();
-      const due = m && a.notify_email && (!a.last_match || !a.last_notified_at || Date.now() - Date.parse(a.last_notified_at) > 24 * 3600e3);
+      const clearKind = a.criteria?.kind === 'clear';
+      const r = clearKind ? await clearMatch(man, a.criteria) : await matchAlert(man, a.criteria);
+      const m = clearKind ? r.match : r.match && r.match.nm2 >= (a.min_nm2 || 5) ? r.match : null, now = new Date().toISOString();
+      // clear views: once per clear spell, at most every 6 h; water: when it first shows up, then daily
+      const due = m && a.notify_email && (clearKind
+        ? (!a.last_match && (!a.last_notified_at || Date.now() - Date.parse(a.last_notified_at) > 6 * 3600e3))
+        : (!a.last_match || !a.last_notified_at || Date.now() - Date.parse(a.last_notified_at) > 24 * 3600e3));
       let notified = a.last_notified_at;
       if (due && env.RESEND_API_KEY) {
         const owner = (await sbAdmin(`profiles?id=eq.${a.user_id}&select=email,first_name`))?.[0];
-        if (owner?.email) {
+        if (owner?.email && clearKind) {
+          const port = a.criteria.port || 'your port', link = `${SITE}/app?alert=${a.id}`, when = new Date(m.hour).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+          await sendEmail({
+            to: [owner.email], subject: `Clear satellite view: ${a.name}`,
+            html: `<p style="font-family:Arial,sans-serif;font-size:16px">${owner.first_name ? `${owner.first_name}, the` : 'The'} satellite has a clear look at <b>${m.pct}%</b> of the water within ${Math.round(a.criteria.run)} nm of ${esc(port)} (${esc(when)} ET). Fresh breaks and color edges are on the chart now.</p>
+              <p><a href="${link}" style="display:inline-block;background:#35c2ff;color:#04121d;font-weight:800;text-decoration:none;padding:12px 22px;border-radius:8px;font-family:Arial,sans-serif">Open the hourly chart</a></p>
+              <p style="font-family:Arial,sans-serif;font-size:12px;color:#777">Turn this alert off in Breakline > Find water. Not for navigation.</p>`,
+            text: `Clear satellite view: ${m.pct}% of the water within ${Math.round(a.criteria.run)} nm of ${port} (${when} ET). ${link}`,
+          });
+          notified = now; sent++;
+        } else if (owner?.email) {
           const port = a.criteria.port || 'your port', link = `${SITE}/app?alert=${a.id}`;
           await sendEmail({
             to: [owner.email], subject: `Your water is back: ${a.name}`,
