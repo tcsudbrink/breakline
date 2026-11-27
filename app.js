@@ -3357,7 +3357,7 @@ function openReading(latlng, title) {
   const el = document.createElement('div'); el.className = 'pp';
   el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table></table>
     <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
-    <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
+    <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><button class="ppMatch">Find this water again</button><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
   const rowEls = ([k, v, info]) => {
     const tr = document.createElement('tr'); tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
@@ -3392,6 +3392,7 @@ function openReading(latlng, title) {
   };
   const bb = el.querySelector('.ppbt');
   bb.onclick = () => { bb.remove(); mountBestTimes(el.querySelector('.ppBtOut'), lat, lng); setTimeout(() => pop.update(), 600); setTimeout(() => pop.update(), 2500); };
+  el.querySelector('.ppMatch').onclick = () => matchHere(lat, lng);
   el.querySelector('.ppSave').onclick = () => {
     const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
     const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
@@ -3509,7 +3510,7 @@ function sbInit() {
     ACCT.user = u; paintAcct();
     if (u && ev !== 'PASSWORD_RECOVERY') checkAccess();
     if (!u && ev === 'SIGNED_OUT') { gateMode('signin'); showGate(true); }
-    if (u && u.id !== was) setTimeout(() => { claimDevice(u.id); syncAll(true); }, 0);
+    if (u && u.id !== was) setTimeout(() => { claimDevice(u.id); syncAll(true); ACCT_HOOK.alerts?.(); }, 0);
   });
   return ACCT.sb;
 }
@@ -3766,6 +3767,96 @@ syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
 
+// ---------- Water alerts: save the water you're in (or any Find your water search) and get told when it's back ----------
+// Alerts live in the account (water_alerts). After every saved-chart update the server re-runs each one
+// (api/check-alerts.js) and emails when the water shows up inside your run; the app shows "matching now".
+S.alerts = [];
+function fwCriteria() {
+  fwFromUi();
+  const f = JSON.parse(JSON.stringify(S.fw)), port = PORTS.find((x) => x[0] === f.port) || PORTS.find((x) => x[0] === S.home);
+  return { ...f, port: port[0], portLat: port[1], portLon: port[2], run: f.run || S.maxRun };
+}
+// "Find this water again": the conditions at a tapped spot become Find your water settings
+async function matchHere(lat, lng) {
+  const [c] = await tripConditions([[lat, lng]]), f = S.fw;
+  if (!c || c.T == null) { status('No saved water readings at that spot yet (clouds or outside the saved areas).', true); return; }
+  Object.assign(f.temp, { on: true, lo: Math.floor((c.T - 1.5) * 2) / 2, hi: Math.ceil((c.T + 1.5) * 2) / 2 });
+  if (c.chl != null) Object.assign(f.chl, { on: true, lo: +(c.chl * 0.7).toFixed(2), hi: +(c.chl * 1.4).toFixed(2) });
+  else f.chl.on = false;
+  if (c.fm != null) Object.assign(f.depth, { on: c.fm >= 10, lo: Math.round(c.fm * 0.6), hi: Math.round(c.fm * 1.6) });
+  if (c.kt != null) Object.assign(f.cur, { on: false, lo: null, hi: +(c.kt + 0.5).toFixed(1) });
+  Object.assign(f.front, { on: c.brk >= 0.27, mode: 'on' });
+  if (c.sal != null) Object.assign(f.sal, { on: false, mode: 'range', lo: +(c.sal - 0.3).toFixed(1), hi: +(c.sal + 0.3).toFixed(1) });
+  f.tempSrc = 'hourly'; if (!f.port) f.port = S.home;
+  store.set('fw', f); fwToUi();
+  map.closePopup();
+  $('fwPanel').hidden = false; $('btnFind').classList.add('open'); $('fishPanel').hidden = true; $('anaPanel').hidden = true; $('tripPanel').hidden = true;
+  $('fwMsg').classList.remove('err');
+  $('fwMsg').innerHTML = `Set from that spot: ${condTxt(c)}. Tap <b>Find water</b> to see where it is now, or <b>Save as alert</b> to be told when it shows up within ${f.run || S.maxRun} nm of ${esc(f.port || S.home)}.`;
+}
+async function alertsLoad() {
+  const sb = ACCT.sb; if (!sb || !ACCT.user) { S.alerts = []; alertsUi(); return; }
+  const { data, error } = await sb.from('water_alerts').select('*').order('created_at');
+  if (!error) { S.alerts = data; alertsUi(); }
+}
+function alertName(c) {
+  const p = [];
+  if (c.temp.on) p.push(`${c.temp.lo ?? ''}-${c.temp.hi ?? ''}°F`);
+  if (c.front.on) p.push(c.front.mode === 'off' ? 'off breaks' : 'on a break');
+  if (c.chl.on) p.push(`color ${c.chl.lo ?? ''}-${c.chl.hi ?? ''}`);
+  if (c.depth.on) p.push(`${c.depth.lo ?? 0}-${c.depth.hi ?? '∞'} fm`);
+  if (c.cur.on) p.push(`current ${c.cur.lo ?? 0}-${c.cur.hi ?? ''} kt`);
+  if (c.sal.on) p.push(c.sal.mode === 'edge' ? 'salinity edge' : `${c.sal.lo}-${c.sal.hi} PSU`);
+  if (c.mld.on) p.push(`MLD ${c.mld.lo ?? 0}-${c.mld.hi ?? ''} ft`);
+  return `${p.join(', ') || 'My water'} within ${Math.round(c.run)} nm of ${c.port}`;
+}
+async function alertSave() {
+  const sb = ACCT.sb; if (!sb || !ACCT.user) { $('fwMsg').textContent = 'Sign in to save alerts.'; return; }
+  const c = fwCriteria(); if (!FW_KEYS.some((k) => c[k].on)) { $('fwMsg').textContent = 'Turn on at least one thing to look for first.'; return; }
+  const name = prompt('Name this alert:', alertName(c).slice(0, 120)); if (name == null) return;
+  const minA = +prompt('Smallest patch worth telling you about (square nautical miles):', '5') || 5;
+  const row = { id: newId(), user_id: ACCT.user.id, name: (name.trim() || alertName(c)).slice(0, 140), criteria: c, min_nm2: Math.max(1, Math.min(5000, minA)) };
+  const { error } = await sb.from('water_alerts').insert(row);
+  if (error) { $('fwMsg').textContent = `Couldn't save the alert: ${error.message}`; $('fwMsg').classList.add('err'); return; }
+  $('fwMsg').classList.remove('err');
+  $('fwMsg').innerHTML = `Saved. Breakline checks it every time new charts land (up to every 10 minutes) and emails ${esc(ACCT.user.email)} when it shows up.`;
+  // ask the server to look right away, so "matching now" fills in
+  fetch('/api/check-alerts', { method: 'POST' }).then(() => setTimeout(alertsLoad, 1500)).catch(() => {});
+  alertsLoad();
+}
+function alertsUi() {
+  const el = $('fwAlerts'); if (!el) return;
+  $('fwAlertsHdr').hidden = !S.alerts.length;
+  el.innerHTML = S.alerts.map((a) => {
+    const m = a.last_match, when = a.last_checked ? new Date(a.last_checked).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'not yet';
+    const st = !a.active ? 'Paused' : m ? `<b class="ok">Matching now</b>: ${m.nm2.toLocaleString()} sq nm, biggest ${m.dist} nm @ ${m.brg}°T` : `Not showing yet (checked ${when})`;
+    return `<li data-id="${a.id}"><b>${esc(a.name)}</b><small>${st}</small><div class="row"><button class="ghost al-show">Show</button><button class="ghost al-pause">${a.active ? 'Pause' : 'Resume'}</button><button class="ghost al-del">Delete</button></div></li>`;
+  }).join('');
+}
+async function alertShow(a) {
+  S.fw = { ...FW_DEF, ...JSON.parse(JSON.stringify(a.criteria)) };
+  for (const k of FW_KEYS) S.fw[k] = { ...FW_DEF[k], ...(a.criteria[k] || {}) };
+  store.set('fw', S.fw); fwToUi();
+  $('fwPanel').hidden = false; $('btnFind').classList.add('open'); ['fishPanel', 'anaPanel', 'tripPanel'].forEach((x) => { $(x).hidden = true; });
+  await findWater();
+}
+$('fwAlerts').addEventListener('click', async (ev) => {
+  const li = ev.target.closest('li[data-id]'); if (!li) return; const a = S.alerts.find((x) => x.id === li.dataset.id); if (!a) return;
+  if (ev.target.classList.contains('al-show')) alertShow(a);
+  if (ev.target.classList.contains('al-pause')) { await ACCT.sb.from('water_alerts').update({ active: !a.active, updated_at: new Date().toISOString() }).eq('id', a.id); alertsLoad(); }
+  if (ev.target.classList.contains('al-del') && confirm(`Delete the alert "${a.name}"?`)) { await ACCT.sb.from('water_alerts').delete().eq('id', a.id); alertsLoad(); }
+});
+$('fwAlert').onclick = alertSave;
+// the link in an alert email: /app?alert=<id> opens it and shows the matching water
+const ALERT_LINK = (location.search.match(/[?&]alert=([0-9a-f-]{36})/i) || [])[1];
+async function alertFromLink() {
+  if (!ALERT_LINK || !ACCT.user) return;
+  history.replaceState(null, '', location.pathname);
+  const { data } = await ACCT.sb.from('water_alerts').select('*').eq('id', ALERT_LINK).maybeSingle();
+  if (data) alertShow(data);
+}
+ACCT_HOOK.alerts = () => { alertsLoad(); alertFromLink(); };
+
 // ---------- Track my day: record the run, then at the end ask why you turned and what you caught where ----------
 // The track and catches stay on the phone and sync to the account (trips / catches tables). Every catch keeps the
 // water it came out of, and once there are 3+ of a species, Where to fish and Find your water tune to them.
@@ -3850,7 +3941,7 @@ async function tripConditions(points) {
   const out = points.map(() => ({}));
   if (!PRE || !points.length) return out;
   const zone = preZoneAt({ lat: points[0][0], lng: points[0][1] }); if (!zone) return out;
-  const [T, Tb, chl, cur, sal] = await Promise.all([preGoesFill(zone), preBlend(zone), preLatestGrid(zone, 'chl/dineof', CHL), preCurrents(zone), preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv)].map((p) => p.catch(() => null)));
+  const [T, Tb, chl, cur, sal] = await Promise.all([preGoesFill(zone), preBlend(zone), preChlBest(zone), preCurrents(zone), preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv)].map((p) => p.catch(() => null)));
   const tg = T ? gradNm(T) : Tb ? gradNm(Tb) : null;
   points.forEach(([la, lo], i) => {
     const r = out[i], b = bathyFromStatic({ s: la - 0.1, n: la + 0.1, w: lo - 0.1, e: lo + 0.1 });
@@ -4199,6 +4290,23 @@ async function preLatestGrid(zone, key, conv) {
   const e = preEntry(`${zone}/${key}/latest`);
   return e?.file ? preGrid(e, conv) : null;
 }
+// Color for searches and alerts: the newest clear satellite pass from the last 3 days at each spot (VIIRS NOAA-20/21,
+// Sentinel-3A/B), with NOAA's gap-filled DINEOF under it where clouds blocked every pass (DINEOF runs ~2-3 weeks behind).
+async function preChlBest(zone) {
+  const base = await preLatestGrid(zone, 'chl/dineof', CHL).catch(() => null), cut = addDays(isoDate(new Date()), -3);
+  const keys = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/chl/`) && /\/chl\/(n21|n20|s3a|s3b)\//.test(k) && PRE.items[k].file && k.split('/').pop() >= cut)
+    .sort((a, b) => b.split('/').pop().localeCompare(a.split('/').pop()));
+  const passes = await Promise.all(keys.map((k) => preGrid(PRE.items[k], CHL)));
+  const g0 = base || passes[0]; if (!g0) return null;
+  const v = new Float32Array(g0.nx * g0.ny); let fresh = 0, any = 0;
+  for (let j = 0; j < g0.ny; j++) for (let i = 0; i < g0.nx; i++) {
+    const k = j * g0.nx + i, la = g0.lat0 + j * g0.dlat, lo = g0.lon0 + i * g0.dlon; let x = NaN;
+    for (const p of passes) { x = sample(p, la, lo); if (x === x) { fresh++; break; } }
+    if (x !== x && base) x = base.v[k];
+    v[k] = x; if (x === x) any++;
+  }
+  return { ...g0, v, date: keys.length ? keys[0].split('/').pop() : base.date, freshPct: any ? Math.round(100 * fresh / any) : 0, gapDate: base?.date };
+}
 // newest clear GOES-19 look at every pixel over the last 24 saved hours
 async function preGoesFill(zone) {
   const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort().slice(-24);
@@ -4252,7 +4360,7 @@ async function findWater() {
     const tempSrc = f.tempSrc === 'blend' ? 'blend' : 'hourly';
     await Promise.all([
       (on('temp') || on('front')) && (tempSrc === 'hourly' ? preGoesFill(zone) : preBlend(zone)).then((g) => { got.temp = g; }),
-      on('chl') && preLatestGrid(zone, 'chl/dineof', CHL).then((g) => { got.chl = g; }),
+      on('chl') && preChlBest(zone).then((g) => { got.chl = g; }),
       on('cur') && (f.curSrc && f.curSrc !== 'sat' ? preModelCurrents(f.curSrc, zone) : preCurrents(zone)).then((g) => { got.cur = g; }),
       on('mld') && preLatestGrid(zone, 'mld/ohc', PRODUCTS.mld.conv).then((g) => { got.mld = g; }),
       on('sal') && preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv).then((g) => { got.sal = g; }),
@@ -4335,7 +4443,7 @@ async function findWater() {
     // what the search used, and how old it is
     const asOf = [];
     if (got.temp) asOf.push(`water temp ${tempSrc === 'hourly' ? `hourly to ${niceHour(got.temp.times[0])}` : `blend ${nice(got.temp.date)}`}`);
-    if (got.chl) asOf.push(`color ${nice(got.chl.date)}`);
+    if (got.chl) asOf.push(`color ${nice(got.chl.date)}${got.chl.freshPct < 90 && got.chl.gapDate ? ` (${100 - got.chl.freshPct}% under cloud, filled from ${nice(got.chl.gapDate)})` : ''}`);
     if (got.cur) asOf.push(`currents ${got.cur.model ? `${CUR_SRC[got.cur.model]} ${niceHour(got.cur.time)}` : `satellite ${nice(got.cur.date)}`}`);
     if (got.mld) asOf.push(`mixed layer ${nice(got.mld.date)}`);
     if (got.sal) asOf.push(`salinity ${nice(got.sal.date)}`);

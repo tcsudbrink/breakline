@@ -204,3 +204,21 @@ end $$;
 drop trigger if exists on_profile_created_notify on public.profiles;
 create trigger on_profile_created_notify after insert on public.profiles
   for each row execute function public.notify_signup();
+-- ---------- v41: water alerts (tell me when this water shows up inside my run) ----------
+create table if not exists public.water_alerts (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name text not null,
+  criteria jsonb not null,                 -- Find your water settings + port lat/lon (see app.js fwCriteria)
+  min_nm2 real not null default 5,         -- smallest patch worth an alert, square nautical miles
+  active boolean not null default true,
+  notify_email boolean not null default true,
+  last_checked timestamptz,
+  last_match jsonb,                        -- {nm2, patches, lat, lon, dist, brg, asof} or null when nothing matches
+  last_notified_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.water_alerts enable row level security;
+drop policy if exists "own alerts" on public.water_alerts;
+create policy "own alerts" on public.water_alerts for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());

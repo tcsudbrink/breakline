@@ -322,6 +322,11 @@ button.ghost { background: transparent !important; }
 #fwList li:hover b { color: var(--accent); }
 #fwList small { color: var(--muted); font-variant-numeric: tabular-nums; }
 #fwMsg.err { color: #ff9b8a; }
+.fw-alerts { list-style: none; padding: 0; margin: 4px 0; }
+.fw-alerts li { border-top: 1px solid var(--line); padding: 7px 0; display: flex; flex-direction: column; gap: 3px; }
+.fw-alerts small { color: var(--muted); } .fw-alerts .ok { color: #5fe0a0; }
+.fw-alerts .row { margin: 2px 0 0; } .fw-alerts .row button { padding: 3px 9px; font-size: 12px; }
+.ppMatch { width: 100%; margin-top: 6px; background: #13243a !important; color: var(--accent) !important; border: 1px solid var(--line) !important; font-weight: 700; }
 #anaBody h4 { margin: 12px 0 4px; font-size: 12.5px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
 #anaBody p { margin: 4px 0; font-size: 13px; line-height: 1.45; }
 #anaBody ul { list-style: none; padding: 0; margin: 4px 0; }

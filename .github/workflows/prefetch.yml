@@ -65,6 +65,11 @@ jobs:
       - id: deploy
         if: steps.fetch.outputs.changed == 'true' && steps.deploy1.outcome == 'failure'
         uses: actions/deploy-pages@v5
+      # New charts are up: re-check everyone's water alerts (the site emails anyone whose water just showed up)
+      - name: Check water alerts
+        if: steps.fetch.outputs.changed == 'true'
+        continue-on-error: true
+        run: curl -s -m 70 -X POST https://www.breaklinefishing.com/api/check-alerts || true
       # Keep a steady 10-minute rhythm: queue the next run 10 minutes after this one started, unless one is
       # already waiting (so the chain never doubles). The cron above restarts the chain if it ever breaks.
       - name: Queue the next check
