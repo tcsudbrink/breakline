@@ -10,3 +10,5 @@ supabase/
 models.py
 landing/
 goes.py
+archive.py
+watchdog.py

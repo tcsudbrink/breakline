@@ -1,0 +1,58 @@
+# Every 30 minutes (GitHub may run it later than that), on its own schedule so it still runs if the prefetch
+# chain dies:
+#  1. watchdog.py: if the newest hourly water temp is over 3 h old (or the saved charts stopped updating),
+#     open a GitHub issue, which GitHub emails to the repo owner, and restart the prefetch. Closes it on recovery.
+#  2. archive.py: copy every finished day of hourly water temps into the `archive` branch, permanently.
+name: watchdog
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: [watchdog.py, archive.py, .github/workflows/watchdog.yml]
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the hourly water temps are fresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watchdog.py
+
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: main
+      - name: Check out the archive branch (create it the first time)
+        run: |
+          git clone --depth 1 --branch archive "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" arch \
+            || { mkdir arch && cd arch && git init -q -b archive && git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+                 && printf '# Breakline archive\n\nEvery day of hourly GOES-19 water temps, as saved by the prefetch. See archive.py on main.\n' > README.md; }
+      - name: Copy finished days
+        run: python3 main/archive.py arch
+      - name: Commit and push
+        working-directory: arch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -q -m "Archive hourly water temps $(date -u +%F)"
+          git push -q origin archive

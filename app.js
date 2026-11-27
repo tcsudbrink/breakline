@@ -1477,7 +1477,7 @@ async function loadGridLive(prod) {
   try { const pg = await preForView(prod); if (pg) return pg; } catch (e) { console.warn('prefetch', e); }
   if (prod === 'goes') {
     const old = goesHours()[0];
-    throw new Error(S.hour && old && S.hour < old ? 'hourly temps only go back about 3 days; use daily Temp for older' : 'no hourly temps saved for this area');
+    throw new Error(S.hour && old && S.hour < old ? `no hourly temps saved for that hour (the archive starts ${ARCH_START}); use daily Temp` : 'no hourly temps saved for this area');
   }
   if (p.family && curSrc(p.family).comp) { const g = await loadComposite(p.family, curSrc(p.family).comp, win, null); g.src = S.src[p.family]; return g; }
   // Copernicus first where it's the better/more reliable source; NOAA if it fails
@@ -2783,8 +2783,9 @@ const PK = { fam: 'sst', items: [], token: 0 };
 function pickerItems(fam) {
   const today = S.date ? addDays(S.date, 1) : isoDate(new Date()), items = [];
   if (fam === 'goes') {
-    const end = S.latestHour || hourAdd(new Date().toISOString(), -5);
-    for (let h = 0; h < 12; h++) { const t = hourAdd(end, -h); items.push({ fam, key: 'goes', t, label: 'GOES-19 hourly', when: niceHour(t), s: { host: 'aoml', id: 'goes19SSThourly', v: 'sst', res: 0.02, asc: true } }); }
+    const saved = goesHours(), end = saved[saved.length - 1] || S.latestHour || hourAdd(new Date().toISOString(), -2);
+    const hrs = saved.length ? saved.slice(-24).reverse() : Array.from({ length: 12 }, (_, h) => hourAdd(end, -h));
+    for (const t of hrs) { items.push({ fam, key: 'goes', t, label: 'GOES-19 hourly', when: niceHour(t), s: { host: 'aoml', id: 'goes19SSThourly', v: 'sst', res: 0.02, asc: true } }); }
     return items;
   }
   const days = fam === 'sst' ? 4 : 7;
@@ -2796,7 +2797,9 @@ function pickerItems(fam) {
       items.push({ fam, key, day: key === 'dineof' ? null : day, t: key === 'dineof' ? null : `${day}T${s.t}`, label: s.label, who: s.who, when: key === 'dineof' ? 'Latest' : nice(day), s });
     }
   }
-  return items.sort((a, b) => !!b.s.comp - !!a.s.comp);   // composites lead the grid
+  // composites lead, then newest day first (sources keep their order within a day), "latest" blends with today
+  const dk = (it) => it.day || (it.latest || it.key === 'dineof' ? '9999' : '');
+  return items.map((it, i) => [it, i]).sort(([a, i], [b, j]) => (!!b.s.comp - !!a.s.comp) || dk(b).localeCompare(dk(a)) || i - j).map(([it]) => it);
 }
 function openPicker(fam = PK.fam) {
   PK.fam = fam; const my = ++PK.token;
@@ -2860,8 +2863,9 @@ function preLatest(zone, fam, key) {
 }
 const PRE_CACHE = new Map();
 async function preGrid(entry, conv) {
-  if (PRE_CACHE.has(entry.file)) return PRE_CACHE.get(entry.file);
-  const r = await fetch(`${LIVE_BASE}${entry.file}`); if (!r.ok) throw new Error('prefetched file missing');
+  const src = entry.url || `${LIVE_BASE}${entry.file}`;
+  if (PRE_CACHE.has(src)) return PRE_CACHE.get(src);
+  const r = await fetch(src); if (!r.ok) throw new Error('prefetched file missing');
   const bmp = await createImageBitmap(await r.blob()), c = document.createElement('canvas'); c.width = entry.nx; c.height = entry.ny;
   const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
   const px = ctx.getImageData(0, 0, entry.nx, entry.ny).data, [lo0, hi0, log] = PRE.enc[entry.enc];
@@ -2872,11 +2876,25 @@ async function preGrid(entry, conv) {
     const x = lo + (q8 - 1) / 254 * (hi - lo); v[j * nx + i] = conv(log ? 10 ** x : x);
   }
   const g = { nx, ny, v, lat0: entry.lat0 + (ny - 1) * entry.dlat, dlat: -entry.dlat, lon0: entry.lon0, dlon: entry.dlon, times: [entry.time], date: entry.time.slice(0, 10), pre: true };
-  PRE_CACHE.set(entry.file, g);
+  PRE_CACHE.set(src, g);
   return g;
 }
 // For the main chart: use the prefetched grid when zoomed out over a prefetched zone
 // force = the live source failed: use the saved copy at any zoom, for the zone under the middle of the screen
+// Permanent archive of the hourly charts (archive.py -> the repo's archive branch), one index per UTC day
+const ARCH_BASE = 'https://raw.githubusercontent.com/tcsudbrink/breakline/archive/goes/', ARCH_START = '2026-11-24', ARCH = new Map();
+function archDay(day) {
+  if (!ARCH.has(day)) ARCH.set(day, fetch(`${ARCH_BASE}${day}/index.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null));
+  return ARCH.get(day);
+}
+async function archEntries(zone, hour) {
+  const out = {}, d = hour.slice(0, 10);
+  for (const day of [addDays(d, -1), d]) {
+    const ix = await archDay(day); if (!ix) continue;
+    for (const [k, e] of Object.entries(ix.items)) if (k.startsWith(`${zone}/goes/`) && e.file) out[k] = { ...e, url: `${ARCH_BASE}${day}/${e.file}` };
+  }
+  return out;
+}
 function goesHours() {
   const zone = PRE && preZoneAt(map.getCenter()); if (!zone) return [];
   return Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort().map((k) => k.split('/')[2]);
@@ -2898,10 +2916,14 @@ async function preForView(prod, force) {
   }
   if (prod === 'goes') {
     // newest-clear-pixel fill across the prefetched hours, same as live
-    const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort();
+    const ENT = {}; for (const k of Object.keys(PRE.items)) if (k.startsWith(`${zone}/goes/`) && !PRE.items[k].none) ENT[k] = PRE.items[k];
+    // older than the live copy (~3 days): fill from the permanent daily archive
+    const live0 = Object.keys(ENT).sort()[0]?.split('/')[2];
+    if (S.hour && (!live0 || S.hour < hourAdd(live0, 24))) Object.assign(ENT, await archEntries(zone, S.hour), ENT);
+    const hours = Object.keys(ENT).sort();
     const upto = S.hour ? hours.filter((k) => k.split('/')[2] <= S.hour) : hours;
     const pick = upto.slice(-24); if (!pick.length) return null;
-    const got = await Promise.allSettled(pick.map((k) => preGrid(PRE.items[k], SST_C)));
+    const got = await Promise.allSettled(pick.map((k) => preGrid(ENT[k], SST_C)));
     const okk = pick.filter((k, i) => got[i].status === 'fulfilled'), grids = got.filter((x) => x.status === 'fulfilled').map((x) => x.value);
     if (!grids.length) return null; pick.splice(0, pick.length, ...okk);
     const last = grids[grids.length - 1], v = last.v.slice();
@@ -2925,11 +2947,12 @@ async function loadThumb(it, vkey) {
   const fam = PK.fam, view = PK.view, conv = fam === 'chl' ? CHL : SST_C, key = `${it.fam}|${it.key}|${it.day || it.t}|${vkey}`;
   try {
     await preReady;
-    const zone = preZone(view), pid = zone && (it.fam === 'goes' ? `${zone}/goes/${it.t}` : `${zone}/${it.fam}/${it.key}/${it.key === 'dineof' ? 'latest' : it.day}`);
+    const zone = preZone(view) || (it.fam === 'goes' ? preZoneAt(L.latLng((view.s + view.n) / 2, (view.w + view.e) / 2)) : null), pid = zone && (it.fam === 'goes' ? `${zone}/goes/${it.t}` : `${zone}/${it.fam}/${it.key}/${it.key === 'dineof' ? 'latest' : it.day}`);
     const pe = pid && preEntry(pid);
     if (THUMBS.has(key)) it.g = THUMBS.get(key);
     else if (pe && pe.none) { it.el.querySelector('em').textContent = pe.cloud ? 'all cloud' : 'no pass that day'; it.el.classList.add('none'); return; }
     else if (pe) it.g = await preGrid(pe, conv);
+    else if (it.fam === 'goes') { it.el.querySelector('em').textContent = zone ? 'not saved yet' : 'outside the hourly areas'; it.el.classList.add('none'); return; }
     else if (it.s.comp) {
       const span = Math.max(view.n - view.s, view.e - view.w);
       it.g = (zone && !S.date && await loadComposite(fam, it.s.comp, null, zone)) || await loadComposite(fam, it.s.comp, { ...view, stride: Math.max(1, Math.ceil(span / it.s.res / 70)) }, null);
@@ -3066,7 +3089,7 @@ function stepTime(dir) {
   if (p.hourly) {
     const cur = S.hour || g?.times?.[g.times.length - 1] || S.latestHour; if (!cur) return;
     const next = hourAdd(cur, dir), old = goesHours()[0];
-    if (dir < 0 && old && next < old) { status('Hourly temps only go back about 3 days. Switch to daily Temp to go further back.', true); return; }
+    if (dir < 0 && next < `${ARCH_START}T00:00:00Z`) { status(`Hourly temps are saved from ${ARCH_START} on. Switch to daily Temp to go further back.`, true); return; }
     S.hour = S.latestHour && next >= S.latestHour ? null : next;
   } else {
     const cur = S.date || g?.date; if (!cur) return;
@@ -3087,7 +3110,7 @@ dp.onchange = () => {
   S.fc = 0;
   if (PRODUCTS[S.prod].hourly) {      // hourly GOES only keeps ~5 days: older dates switch to the daily map
     const old = goesHours()[0];
-    if (old ? `${d}T23:00:00Z` < old : d < addDays(isoDate(new Date()), -3)) { S.prod = 'sst'; store.set('prod', 'sst'); document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === 'sst')); S.hour = null; S.date = d; }
+    if (d < ARCH_START) { S.prod = 'sst'; store.set('prod', 'sst'); document.querySelectorAll('.prod').forEach((x) => x.classList.toggle('active', x.dataset.prod === 'sst')); S.hour = null; S.date = d; }
     else { S.hour = `${d}T12:00:00Z`; }
   } else S.date = d >= isoDate(new Date()) ? null : d;
   invalidateTimeData(); refresh();
