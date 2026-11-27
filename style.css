@@ -414,3 +414,6 @@ body.gated #rail, body.gated #topLeft, body.gated #datebar { visibility: hidden;
 
 .layer-info .li-more { margin: 10px 0 0; font-size: 12px; }
 .layer-info .li-more a, #layers .hint a { color: var(--accent); }
+
+/* phones: an open popup goes in front of the location readout and legend (Leaflet's popup pane is z 700) */
+@media (max-width: 700px) { body.pp-open #foot { z-index: 650; } }

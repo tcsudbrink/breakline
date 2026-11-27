@@ -3946,6 +3946,9 @@ window.__S = S; window.__map = map; window.__ACCT = ACCT;
 syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
+// a tapped reading's popup sits in front of the bottom readout + legend (on phones they cover its Save row)
+map.on('popupopen', () => document.body.classList.add('pp-open'));
+map.on('popupclose', () => document.body.classList.remove('pp-open'));
 
 // ---------- Numbered picks: tap a yellow (Where to fish) or blue (Find your water) circle to see why, and save it as a spot ----------
 const RUN_KT = 25;
