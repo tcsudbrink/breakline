@@ -2,7 +2,7 @@
 // Only good answers are cached: a NOAA "busy" (503) or timeout is passed through uncached, so one bad
 // moment at NOAA never sticks. Tiles from app.js repeat exactly, so after the first look (or the warm.mjs
 // pre-load) everyone gets that water from the CDN in ~0.1 s and NOAA isn't asked again.
-export const config = { runtime: 'edge' };
+// Node runtime (not edge): NOAA can take 25+ s to start answering, past the edge runtime's 25 s limit.
 
 const HOSTS = {
   pfeg: 'https://coastwatch.pfeg.noaa.gov/erddap/',
@@ -12,7 +12,7 @@ const HOSTS = {
   ndbc: 'https://www.ndbc.noaa.gov/',
 };
 
-export default async function handler(req) {
+export async function GET(req) {
   const u = new URL(req.url);
   // the rewrite keeps the original path; drop the path=... it may append to the query
   const m = u.pathname.match(/^\/erddap\/(\w+)\/(.*)$/), host = m && HOSTS[m[1]];

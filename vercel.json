@@ -68,6 +68,9 @@
     },
     "api/warm.js": {
       "maxDuration": 60
+    },
+    "api/erddap.js": {
+      "maxDuration": 60
     }
   }
 }
