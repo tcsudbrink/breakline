@@ -283,6 +283,29 @@ button.ghost { background: transparent !important; }
 
 /* Ocean analysis write-up */
 #anaPanel { width: 330px; }
+/* Track my day */
+#tripPanel { width: 330px; max-height: calc(100% - 120px); overflow-y: auto; }
+#tripChip { position: absolute; top: 92px; left: calc(var(--rail) + 50%); transform: translateX(-50%); z-index: 1001; background: #3a0d12; color: #ffb3b6;
+  border: 1px solid #ff5a5f; border-radius: 14px; padding: 4px 12px; font: 700 12px system-ui, sans-serif; cursor: pointer; }
+#rail .tool.rec .ico { color: #ff5a5f; animation: recblink 1.6s infinite; }
+@keyframes recblink { 50% { opacity: .35; } }
+.trip-stats { font-weight: 700; margin: 4px 0 8px; }
+.trip-list { list-style: none; padding: 0; margin: 0; } .trip-list button { width: 100%; text-align: left; margin: 3px 0; }
+.trip-events { list-style: none; padding: 0; margin: 6px 0; }
+.trip-events li { border-top: 1px solid var(--line); padding: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+.trip-events small { color: var(--muted); }
+.trip-events .why { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { padding: 3px 8px !important; border-radius: 12px !important; font-size: 12px !important; }
+.chip.on { background: var(--accent) !important; color: #04121d !important; border-color: var(--accent) !important; font-weight: 700; }
+.tc-note { background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
+.tc-add { display: flex; gap: 4px; } .tc-add select { flex: 1; min-width: 0; } .tc-add .tc-n { width: 52px; background: #13243a; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+.tc-row { font-size: 13px; display: flex; align-items: center; gap: 6px; } .tc-row .x { margin-left: auto; background: none !important; border: 0 !important; color: var(--muted) !important; font-size: 16px; cursor: pointer; }
+.trip-ev { width: 22px; height: 22px; border-radius: 50%; background: #ffd23f; color: #000; font: 800 11px/22px system-ui, sans-serif; text-align: center; border: 2px solid #000; cursor: pointer; }
+.trip-ev.stop { background: #ff9f43; }
+.catch-pin { font-size: 16px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #000); }
+@media (max-width: 700px) { #tripPanel { width: auto; } #tripChip { top: 100px; left: 50%; } }
+
 /* Find your water */
 #fwPanel { width: 310px; max-height: calc(100% - 120px); overflow-y: auto; }
 .fwc { border-top: 1px solid var(--line); padding: 6px 0 2px; }

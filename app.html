@@ -57,6 +57,7 @@
   <div class="sep"></div>
   <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
   <button id="btnWpts" class="tool"><span class="ico">&#9670;</span><span>Spots</span></button>
+  <button id="btnTrip" class="tool" title="Track my day"><span class="ico">&#9673;</span><span>Trip</span></button>
   <button id="btnFind" class="tool"><span class="ico">&#9678;</span><span>Find water</span></button>
 </nav>
 
@@ -185,9 +186,35 @@
   <div class="fwc" data-k="sal"><label><input type="checkbox" class="on"> Salinity</label>
     <div class="row2"><select class="mode"><option value="range">In a range</option><option value="edge">On a salinity edge</option></select></div>
     <div class="row2 salr"><input class="lo" type="number" step="0.1" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" step="0.1" placeholder="max"><span class="lbl">PSU</span></div></div>
-  <div class="row"><button id="fwGo">Find water</button><button id="fwFill" class="ghost" title="Set temp and depth from the species picked in Where to fish">Use species</button><button id="fwClear" class="ghost">Clear</button></div>
+  <div class="row"><button id="fwGo">Find water</button><button id="fwFill" class="ghost" title="Set temp and depth from the species picked in Where to fish">Use species</button><button id="fwMine" class="ghost" title="Set the ranges from the fish you've logged with Track my day">Use my catches</button><button id="fwClear" class="ghost">Clear</button></div>
   <p id="fwMsg" class="hint"></p>
   <ol id="fwList"></ol>
+</section>
+
+<!-- Track my day -->
+<button id="tripChip" hidden></button>
+<section id="tripPanel" class="panel side" hidden>
+  <h3>Track my day <button id="tripClose" class="x" aria-label="Close">&times;</button></h3>
+  <div id="tripIdle">
+    <p class="hint">Start when you leave the dock. Breakline draws your track, and at the end of the day it asks why you turned where you did and what you caught where. Your catches then tune Where to fish and Find your water to the water you actually catch fish in.</p>
+    <div class="row"><button id="tripGo">Start tracking</button><button class="ghost tripPin">Add a catch on the map</button></div>
+    <p class="hint">Phones pause web GPS when the screen locks, so keep Breakline open (it keeps the screen on while tracking) and plugged in.</p>
+    <h3>Past days</h3><ul id="tripList" class="trip-list"></ul>
+  </div>
+  <div id="tripLive" hidden>
+    <p id="tripStats" class="trip-stats"></p>
+    <label class="row2"><input id="tripAwake" type="checkbox"> Keep the screen on while tracking</label>
+    <div class="row"><button id="tripEnd">Stop &amp; review my day</button><button class="ghost tripPin">Log a catch here</button></div>
+  </div>
+  <div id="tripReview" hidden>
+    <p id="tripSum" class="trip-stats"></p>
+    <p class="hint">For each stop or hard turn, tap why, and add what you caught there.</p>
+    <ol id="tripEvents" class="trip-events"></ol>
+    <div id="tripOther"></div>
+    <div class="row"><button class="ghost tripPin">Add a catch on the map</button></div>
+    <div class="row"><button id="tripSave">Save my day</button><button id="tripDiscard" class="ghost">Close</button></div>
+  </div>
+  <p id="tripLearn" class="hint"></p>
 </section>
 
 <!-- Ocean analysis write-up -->

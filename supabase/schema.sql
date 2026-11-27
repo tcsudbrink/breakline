@@ -151,3 +151,56 @@ where not exists (select 1 from public.free_accounts f where lower(f.email) = lo
   and (s.status in ('past_due', 'canceled', 'unpaid') or (s.cancel_at_period_end and s.status = 'active')
        or (coalesce(s.status, '') not in ('active', 'trialing') and u.created_at < now() - interval '5 days'));
 revoke all on public.follow_up from public, anon, authenticated;
+-- ---------- v40: Track my day (trips + catches) and the new-sign-up email ----------
+-- A day on the water: the GPS track (thinned) and the stops/turns with the answers to "why here?"
+create table if not exists public.trips (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  started_at timestamptz not null,
+  ended_at timestamptz,
+  nm real,
+  track jsonb not null default '[]'::jsonb,     -- [[unix seconds, lat, lon, knots], ...]
+  events jsonb not null default '[]'::jsonb,    -- [{type: stop|turn, t, lat, lon, why: [...], note}]
+  updated_at timestamptz not null default now()
+);
+-- Every fish logged, with the water it came out of (temp, color, current, depth, break strength, salinity)
+create table if not exists public.catches (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  trip_id uuid references public.trips (id) on delete set null,
+  species text not null,
+  n integer not null default 1 check (n between 1 and 500),
+  lat double precision not null check (lat between -90 and 90),
+  lon double precision not null check (lon between -180 and 180),
+  caught_at timestamptz not null,
+  why jsonb not null default '[]'::jsonb,
+  conditions jsonb,
+  note text,
+  deleted_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index if not exists catches_user_species on public.catches (user_id, species);
+alter table public.trips enable row level security;
+alter table public.catches enable row level security;
+drop policy if exists "own trips" on public.trips;
+create policy "own trips" on public.trips for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "own catches" on public.catches;
+create policy "own catches" on public.catches for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- New sign-up -> POST to the site, which emails the owner (api/signup-notify.js)
+alter table public.profiles add column if not exists notified_at timestamptz;
+create extension if not exists pg_net with schema extensions;
+create or replace function public.notify_signup() returns trigger
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform net.http_post(
+    url := 'https://www.breaklinefishing.com/api/signup-notify',
+    body := jsonb_build_object('user_id', new.id),
+    headers := '{"Content-Type": "application/json"}'::jsonb);
+  return new;
+exception when others then
+  return new;            -- never block a sign-up over the alert
+end $$;
+drop trigger if exists on_profile_created_notify on public.profiles;
+create trigger on_profile_created_notify after insert on public.profiles
+  for each row execute function public.notify_signup();

@@ -114,6 +114,7 @@ def page(slug, p):
   <div class="grid three">
     <div class="card"><h3>Find your water</h3><p>Pick your port and how far you'll run, set the conditions you want, and every matching patch is marked.</p></div>
     <div class="card"><h3>Offshore, no signal</h3><p>Save the last 48 hours of charts for your area at the dock and use them 80 miles out.</p></div>
+    <div class="card"><h3>Learns how you fish</h3><p>Track your day, tell it what you caught where, and the picks tune to the water you actually catch fish in.</p></div>
     <div class="card"><h3>Works when NOAA doesn't</h3><p>Breakline keeps its own copy of every chart, checked every 10 minutes, so an outage doesn't cost you the morning.</p></div>
   </div>
   <p class="sub center">Covers Maine to Panama: the canyons, the Carolinas, Florida, the Gulf, the Bahamas and Caribbean, Cabo and Central America. <a href="/#coverage">See every port</a>.</p>

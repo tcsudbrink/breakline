@@ -1720,7 +1720,7 @@ function maxFilter(g, vals, r) {
   return out;
 }
 function buildFish() {
-  const sst = S.data.sst, sp = SPECIES[S.species] || SPECIES.yellowfin;
+  const sst = S.data.sst, sp = tunedSpecies(SPECIES[S.species] || SPECIES.yellowfin, S.species);   // nudged by your logged catches
   if (!sst) return;
   // work on a ~2-3 km grid over the SST window
   const f = Math.max(1, Math.round(0.025 / sst.dlat));
@@ -1733,7 +1733,7 @@ function buildFish() {
     const la = g.lat0 + j * g.dlat, lo = g.lon0 + i * g.dlon, k = j * g.nx + i;
     Td[k] = sample(sst, la, lo); dep[k] = sample(S.data.bathy, la, lo);
     const h = S.date ? NaN : sample(S.data.goes, la, lo);
-    if (h === h) { T[k] = h; hourly[k] = 1; nh++; } else T[k] = Td[k];
+    if (h === h) { T[k] = h; hourly[k] = 1; if (dep[k] < 0) nh++; } else T[k] = Td[k];
     if (dep[k] < 0) nw++;
     const c = sample(S.data.chl, la, lo); if (c > 0) lchl[k] = Math.log10(c);
     const cu = curAt(la, lo); if (cu) cur[k] = Math.hypot(cu[0], cu[1]) * 1.94384;
@@ -1948,7 +1948,7 @@ function renderSpots() {
   document.querySelector('#fishPanel .hint.long').hidden = ins;
   if (ins) {
     $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station and when to fish them, the solunar periods (★ = lines up with that tide), and the wind.`;
-  } else $('fishBasis').textContent = fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '';
+  } else $('fishBasis').textContent = (learned(S.species) ? `Tuned to your ${learned(S.species).n} logged catches. ` : '') + (fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '');
   el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
 }
 
@@ -3437,6 +3437,7 @@ $('measureClear').onclick = () => clearMeasure();
 $('measureDone').onclick = () => { MEAS.on = false; clearMeasure(); MEAS.btn.classList.remove('on'); $('measureBar').hidden = true; };
 
 map.on('click', (e) => {
+  if (TRIP.pinning) return;                       // Track my day: this tap places a catch
   if (MEAS.on) { MEAS.pts.push([e.latlng.lat, e.latlng.lng]); drawMeasure(); return; }
   openReading(e.latlng);
 });
@@ -3632,7 +3633,7 @@ async function syncAll(first) {
   if (!ACCT.user || ACCT.busy) { ACCT.again = true; return; }
   ACCT.busy = true; $('acctSync').textContent = 'Syncing…';
   try {
-    await syncSettings(first); await syncSpots(); await checkAccess().catch(() => {});
+    await syncSettings(first); await syncSpots(); await tripSync(); await checkAccess().catch(() => {});
     $('acctSync').textContent = `Synced ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   } catch (e) {
     $('acctSync').textContent = navigator.onLine ? 'Sync failed: will retry' : 'Offline: will sync when you reconnect';
@@ -3764,6 +3765,316 @@ window.__S = S; window.__map = map; window.__ACCT = ACCT;
 syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
+
+// ---------- Track my day: record the run, then at the end ask why you turned and what you caught where ----------
+// The track and catches stay on the phone and sync to the account (trips / catches tables). Every catch keeps the
+// water it came out of, and once there are 3+ of a species, Where to fish and Find your water tune to them.
+// Phones pause web GPS when the screen locks, so recording keeps the screen awake (Wake Lock) while it runs.
+const WHY = ['Temp break', 'Color change', 'Weed line', 'Birds', 'Bait', 'Marks on the sounder', 'Bite / hookup', 'Current edge', 'Bottom / structure', 'Other boats', 'Just searching', 'Weather / seas'];
+const TRIP = { watch: null, lock: null, layer: L.layerGroup().addTo(map), review: null };
+S.trip = store.get('tripLive', null);               // the day being recorded, saved after every point
+S.trips = store.get('trips', []);                   // finished days on this device (track thinned)
+S.catches = store.get('catches', []);
+const tripSave = () => store.set('tripLive', S.trip);
+const nmBetween = (a, b) => rangeBearing([a[1], a[2]], [b[1], b[2]])[0];
+function tripNm(pts) { let d = 0; for (let i = 1; i < pts.length; i++) d += nmBetween(pts[i - 1], pts[i]); return d; }
+const hhmm = (ms) => { const m = Math.round(ms / 60000); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+const spLabel = (k) => SPECIES[k]?.label || k;
+
+function tripStart() {
+  if (!navigator.geolocation) { status('This device has no location service.', true); return; }
+  S.trip = { id: newId(), start: Date.now(), pts: [] }; tripSave();
+  tripWatch(); tripUi();
+}
+async function tripWakeLock() {
+  try { if ('wakeLock' in navigator && $('tripAwake').checked && !TRIP.lock) { TRIP.lock = await navigator.wakeLock.request('screen'); TRIP.lock.addEventListener('release', () => { TRIP.lock = null; }); } } catch (e) { /* not allowed right now */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.trip) tripWakeLock(); });
+function tripWatch() {
+  if (TRIP.watch != null) return;
+  tripWakeLock();
+  TRIP.watch = navigator.geolocation.watchPosition((p) => {
+    if (!S.trip || p.coords.accuracy > 150) return;
+    const t = p.timestamp || Date.now(), la = p.coords.latitude, lo = p.coords.longitude, last = S.trip.pts[S.trip.pts.length - 1];
+    let kt = p.coords.speed != null ? p.coords.speed * 1.94384 : NaN;
+    if (last) {
+      const d = nmBetween(last, [0, la, lo]), dt = (t - last[0]) / 3600e3;
+      if (kt !== kt && dt > 0) kt = d / dt;
+      // keep a point every 20 s once you've moved 30 m, and at least every 2 min
+      if (!((t - last[0] > 20e3 && d > 0.016) || t - last[0] > 120e3)) return;
+    }
+    S.trip.pts.push([t, +la.toFixed(5), +lo.toFixed(5), kt === kt ? +kt.toFixed(1) : null]);
+    tripSave(); tripDraw(); tripUi();
+  }, (e) => { if (e.code === 1) { showLocHelp(); } }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 60000 });
+}
+function tripStopWatch() {
+  if (TRIP.watch != null) navigator.geolocation.clearWatch(TRIP.watch);
+  TRIP.watch = null; try { TRIP.lock?.release(); } catch (e) { /* already released */ } TRIP.lock = null;
+}
+
+// Where you stopped (under 2 kt for 8+ minutes) and where you turned hard while moving (60°+ over ~2 minutes).
+// Skips the first and last mile out of the inlet so the run out and back doesn't count.
+function tripEvents(pts) {
+  const ev = [], nearPort = (la, lo) => PORTS.some((p) => rangeBearing([p[1], p[2]], [la, lo])[0] < 1.5);
+  const spd = pts.map((p, i) => (p[3] != null ? p[3] : i ? nmBetween(pts[i - 1], p) / Math.max(1e-6, (p[0] - pts[i - 1][0]) / 3600e3) : 0));
+  for (let i = 0; i < pts.length;) {
+    if (spd[i] >= 2) { i++; continue; }
+    let j = i; while (j + 1 < pts.length && spd[j + 1] < 2) j++;
+    if (pts[j][0] - pts[i][0] >= 8 * 60e3) {
+      const seg = pts.slice(i, j + 1), la = seg.reduce((s, p) => s + p[1], 0) / seg.length, lo = seg.reduce((s, p) => s + p[2], 0) / seg.length;
+      if (!nearPort(la, lo)) ev.push({ type: 'stop', t: pts[i][0], t1: pts[j][0], lat: +la.toFixed(5), lon: +lo.toFixed(5) });
+    }
+    i = j + 1;
+  }
+  const at = (t) => { let k = 0; while (k + 1 < pts.length && pts[k + 1][0] <= t) k++; return k; };
+  const turns = [];
+  for (let i = 1; i < pts.length - 1; i++) {
+    if (spd[i] < 3) continue;
+    const a = pts[at(pts[i][0] - 120e3)], b = pts[i], c = pts[Math.min(pts.length - 1, at(pts[i][0] + 120e3) + 1)];
+    if (a === b || b === c || nmBetween(a, b) < 0.1 || nmBetween(b, c) < 0.1) continue;
+    const h1 = rangeBearing([a[1], a[2]], [b[1], b[2]])[1], h2 = rangeBearing([b[1], b[2]], [c[1], c[2]])[1];
+    const d = Math.abs(((h2 - h1 + 540) % 360) - 180);
+    if (d >= 60 && !nearPort(b[1], b[2])) turns.push({ type: 'turn', t: b[0], lat: b[1], lon: b[2], turn: Math.round(d), dir: ((h2 - h1 + 360) % 360) < 180 ? 'right' : 'left' });
+  }
+  // one question per turn: keep the sharpest within 10 minutes, and none during a stop
+  for (const tn of turns.sort((x, y) => y.turn - x.turn)) {
+    if (ev.some((e) => Math.abs(e.t - tn.t) < 10 * 60e3 || (e.t1 && tn.t >= e.t && tn.t <= e.t1))) continue;
+    ev.push(tn);
+  }
+  return ev.sort((x, y) => x.t - y.t).slice(0, 20).map((e) => ({ ...e, why: [], note: '' }));
+}
+
+// The water at a spot, from Breakline's saved charts (same sources as Find your water)
+async function tripConditions(points) {
+  await preReady; await bathy2Ready;
+  const out = points.map(() => ({}));
+  if (!PRE || !points.length) return out;
+  const zone = preZoneAt({ lat: points[0][0], lng: points[0][1] }); if (!zone) return out;
+  const [T, Tb, chl, cur, sal] = await Promise.all([preGoesFill(zone), preBlend(zone), preLatestGrid(zone, 'chl/dineof', CHL), preCurrents(zone), preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv)].map((p) => p.catch(() => null)));
+  const tg = T ? gradNm(T) : Tb ? gradNm(Tb) : null;
+  points.forEach(([la, lo], i) => {
+    const r = out[i], b = bathyFromStatic({ s: la - 0.1, n: la + 0.1, w: lo - 0.1, e: lo + 0.1 });
+    let t = T ? sample(T, la, lo) : NaN; if (t !== t && Tb) t = sample(Tb, la, lo);
+    if (t === t) r.T = +t.toFixed(1);
+    const z = b ? sample(b, la, lo) : NaN; if (z < 0) r.fm = Math.round(-z / FATHOM);
+    const c = chl ? sample(chl, la, lo) : NaN; if (c === c) r.chl = +c.toFixed(3);
+    if (cur) { const u = sample(cur, la, lo, cur.u), v = sample(cur, la, lo, cur.vv); if (u === u && v === v) r.kt = +(Math.hypot(u, v) * 1.94384).toFixed(2); }
+    const g = tg ? sample(tg, la, lo) : NaN; if (g === g) r.brk = +g.toFixed(2);
+    const s = sal ? sample(sal, la, lo) : NaN; if (s === s) r.sal = +s.toFixed(2);
+  });
+  return out;
+}
+const condTxt = (c) => [c.T != null && `${c.T}°F`, c.fm != null && `${c.fm.toLocaleString()} fm`, c.chl != null && `${c.chl < 1 ? c.chl.toFixed(2) : c.chl.toFixed(1)} mg/m³`, c.kt != null && `${c.kt.toFixed(1)} kt`, c.brk >= 0.27 && 'on a break'].filter(Boolean).join(' · ');
+
+async function tripStop() {
+  if (!S.trip) return;
+  tripStopWatch();
+  const t = S.trip; t.end = Date.now();
+  t.events = tripEvents(t.pts);
+  const conds = await tripConditions(t.events.map((e) => [e.lat, e.lon]));
+  t.events.forEach((e, i) => { e.c = conds[i]; });
+  TRIP.review = t; S.trip = null; tripSave();
+  tripUi(); tripDraw();
+  if (t.pts.length > 1) map.fitBounds(L.latLngBounds(t.pts.map((p) => [p[1], p[2]])).pad(0.15));
+}
+function tripReviewPast(id) {
+  const t = S.trips.find((x) => x.id === id); if (!t) return;
+  TRIP.review = JSON.parse(JSON.stringify(t)); TRIP.review.saved = true;
+  tripUi(); tripDraw();
+  if (t.pts.length > 1) map.fitBounds(L.latLngBounds(t.pts.map((p) => [p[1], p[2]])).pad(0.15));
+}
+
+// species list for a spot: offshore and inshore species for that ocean, plus anything already logged
+function speciesNear(la, lo) {
+  const keys = speciesFor(oceanAt(la, lo), la, lo).map(([k]) => k);
+  for (const c of S.catches) if (!keys.includes(c.species)) keys.push(c.species);
+  return keys;
+}
+function catchForm(ev, idx) {
+  const opts = speciesNear(ev.lat, ev.lon).map((k) => `<option value="${k}">${esc(spLabel(k))}</option>`).join('');
+  return `<div class="tc-add" data-i="${idx}"><select class="tc-sp"><option value="">Caught something here?</option>${opts}<option value="__other">Other…</option></select>` +
+    `<input class="tc-n" type="number" min="1" max="500" value="1" aria-label="How many"><button class="ghost tc-go">Add</button></div>`;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function tripUi() {
+  const live = !!S.trip, rv = TRIP.review;
+  $('tripIdle').hidden = live || !!rv; $('tripLive').hidden = !live; $('tripReview').hidden = !rv;
+  $('tripChip').hidden = !live;
+  $('btnTrip').classList.toggle('rec', live);
+  if (live) {
+    const p = S.trip.pts, el = Date.now() - Math.min(S.trip.start, p[0]?.[0] ?? S.trip.start), nm = tripNm(p);
+    $('tripStats').textContent = `${hhmm(el)} on the water · ${nm.toFixed(1)} nm · ${p.length} points${TRIP.watch == null ? ' · GPS paused' : ''}`;
+    $('tripChip').textContent = `● Tracking ${hhmm(el)} · ${nm.toFixed(1)} nm`;
+  }
+  if (rv) {
+    const nm = tripNm(rv.pts), mine = S.catches.filter((c) => c.trip_id === rv.id && !c.deleted);
+    $('tripSum').textContent = `${new Date(rv.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${hhmm((rv.end || rv.start) - Math.min(rv.start, rv.pts[0]?.[0] ?? rv.start))} · ${nm.toFixed(1)} nm · ${rv.events.length} stops and turns`;
+    $('tripEvents').innerHTML = rv.events.map((e, i) => `<li data-i="${i}">
+      <b>${i + 1}. ${e.type === 'stop' ? `Stopped ${hhmm(e.t1 - e.t)}` : `Turned ${e.turn}° ${e.dir}`}</b>
+      <small>${new Date(e.t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · ${fmtLL(e.lat, e.lon)}${e.c && condTxt(e.c) ? `<br>${condTxt(e.c)}` : ''}</small>
+      <div class="why">${e.type === 'stop' ? 'What was here?' : 'Why did you turn?'}</div>
+      <div class="chips">${WHY.map((w) => `<button class="chip${e.why.includes(w) ? ' on' : ''}" data-w="${esc(w)}">${esc(w)}</button>`).join('')}</div>
+      <input class="tc-note" placeholder="Anything else? (optional)" value="${esc(e.note || '')}">
+      ${mine.filter((c) => c.ev === i).map((c) => `<div class="tc-row">🐟 ${c.n} ${esc(spLabel(c.species))} <button class="x tc-del" data-id="${c.id}" title="Remove">&times;</button></div>`).join('')}
+      ${catchForm(e, i)}</li>`).join('') || '<li><small>No stops or hard turns found. Add your catches on the map below.</small></li>';
+    $('tripOther').innerHTML = mine.filter((c) => c.ev == null).map((c) => `<div class="tc-row">🐟 ${c.n} ${esc(spLabel(c.species))} · ${fmtLL(c.lat, c.lon)} <button class="x tc-del" data-id="${c.id}" title="Remove">&times;</button></div>`).join('');
+    $('tripSave').textContent = rv.saved ? 'Save changes' : 'Save my day';
+  }
+  $('tripList').innerHTML = S.trips.slice(-8).reverse().map((t) => {
+    const n = S.catches.filter((c) => c.trip_id === t.id && !c.deleted).reduce((s, c) => s + c.n, 0);
+    return `<li><button class="ghost" data-id="${t.id}">${new Date(t.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${(t.nm || 0).toFixed(0)} nm · ${n} fish</button></li>`;
+  }).join('');
+  $('tripList').querySelectorAll('button').forEach((b) => { b.onclick = () => tripReviewPast(b.dataset.id); });
+  tripLearnTxt();
+}
+function tripLearnTxt() {
+  const sp = S.species, L2 = learned(sp), n = S.catches.filter((c) => !c.deleted && c.species === sp).length;
+  $('tripLearn').innerHTML = L2 ? `Where to fish is tuned to your <b>${L2.n} ${esc(spLabel(sp).toLowerCase())}</b> catches: ${L2.T ? `${L2.T[0]}-${L2.T[1]}°F` : ''}${L2.fm ? `, ${L2.fm[0]}-${L2.fm[1]} fm` : ''}.`
+    : `Log ${Math.max(0, 3 - n)} more ${esc(spLabel(sp).toLowerCase())} and Where to fish starts tuning to the water you catch them in.`;
+}
+function tripDraw() {
+  TRIP.layer.clearLayers();
+  const t = S.trip || TRIP.review;
+  if (t && t.pts.length > 1) L.polyline(t.pts.map((p) => [p[1], p[2]]), { color: S.trip ? '#ff5a5f' : '#ffd23f', weight: 3, opacity: 0.9, interactive: false }).addTo(TRIP.layer);
+  if (TRIP.review) TRIP.review.events.forEach((e, i) => L.marker([e.lat, e.lon], { icon: L.divIcon({ className: '', html: `<div class="trip-ev ${e.type}">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) })
+    .on('click', () => { $('tripPanel').hidden = false; $('tripEvents').querySelector(`li[data-i="${i}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }).addTo(TRIP.layer));
+  if (S.ov.catches !== false) for (const c of S.catches) if (!c.deleted) L.marker([c.lat, c.lon], { icon: L.divIcon({ className: '', html: `<div class="catch-pin" title="${esc(`${c.n} ${spLabel(c.species)}`)}">🐟</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }), interactive: false }).addTo(TRIP.layer);
+}
+async function addCatch(species, n, la, lo, ev) {
+  const rv = TRIP.review, e = ev != null && rv ? rv.events[ev] : null;
+  const [c] = e?.c ? [e.c] : await tripConditions([[la, lo]]);
+  S.catches.push({ id: newId(), trip_id: rv?.id || null, ev, species, n: Math.max(1, Math.min(500, n | 0 || 1)), lat: +la.toFixed(5), lon: +lo.toFixed(5),
+    t: new Date(e?.t || Date.now()).toISOString(), why: e?.why || [], c, u: Date.now() });
+  store.set('catches', S.catches); tripUi(); tripDraw(); tripSync();
+}
+// a catch logged on the water: tied to the day being recorded, placed where the boat is now
+async function addCatchLive(sp, last) {
+  const [c] = await tripConditions([[last[1], last[2]]]);
+  S.catches.push({ id: newId(), trip_id: S.trip.id, ev: null, species: sp, n: 1, lat: last[1], lon: last[2], t: new Date(last[0]).toISOString(), why: [], c, u: Date.now() });
+  store.set('catches', S.catches); tripDraw(); status(`Logged: ${spLabel(sp)}.`);
+}
+async function tripSaveDay() {
+  const rv = TRIP.review; if (!rv) return;
+  rv.nm = +tripNm(rv.pts).toFixed(1);
+  // keep the phone's copy small: at most ~1,500 points per day
+  if (rv.pts.length > 1500) { const k = Math.ceil(rv.pts.length / 1500); rv.pts = rv.pts.filter((p, i) => i % k === 0 || i === rv.pts.length - 1); }
+  // the reasons given at a spot travel with the catches logged there (the model weighs them)
+  for (const c of S.catches) if (c.trip_id === rv.id && c.ev != null && rv.events[c.ev]) { c.why = rv.events[c.ev].why; c.u = Date.now(); }
+  const i = S.trips.findIndex((x) => x.id === rv.id), copy = { ...rv, u: Date.now() }; delete copy.saved;
+  if (i >= 0) S.trips[i] = copy; else S.trips.push(copy);
+  store.set('trips', S.trips); store.set('catches', S.catches);
+  TRIP.review = null; tripUi(); tripDraw(); tripSync();
+  status('Day saved. Your catches now help pick where to fish.');
+  if (S.prod === 'fish') buildFish(), chart.draw();
+}
+// account sync: last change wins, like spots
+async function tripSync() {
+  const sb = ACCT.sb, uid = ACCT.user?.id; if (!sb || !uid) return;
+  try {
+    const sent = store.get('tripSent', 0);
+    const trips = S.trips.filter((t) => (t.u || 0) > sent).map((t) => ({ id: t.id, user_id: uid, started_at: new Date(t.start).toISOString(), ended_at: t.end ? new Date(t.end).toISOString() : null,
+      nm: t.nm, track: t.pts.map((p) => [Math.round(p[0] / 1000), p[1], p[2], p[3]]), events: t.events, updated_at: new Date(t.u).toISOString() }));
+    if (trips.length) { const { error } = await sb.from('trips').upsert(trips); if (error) throw error; }
+    const cs = S.catches.filter((c) => (c.u || 0) > sent).map((c) => ({ id: c.id, user_id: uid, trip_id: c.trip_id && S.trips.some((t) => t.id === c.trip_id) ? c.trip_id : null, species: c.species, n: c.n,
+      lat: c.lat, lon: c.lon, caught_at: c.t, why: c.why || [], conditions: c.c || null, note: c.note || null, deleted_at: c.deleted ? new Date(c.u).toISOString() : null, updated_at: new Date(c.u).toISOString() }));
+    if (cs.length) { const { error } = await sb.from('catches').upsert(cs); if (error) throw error; }
+    // pull what other devices logged
+    const { data: rc, error: e3 } = await sb.from('catches').select('id,trip_id,species,n,lat,lon,caught_at,why,conditions,note,deleted_at,updated_at');
+    if (e3) throw e3;
+    const have = new Map(S.catches.map((c) => [c.id, c]));
+    for (const r of rc) {
+      const l = have.get(r.id), ru = Date.parse(r.updated_at);
+      if (l && (l.u || 0) >= ru) continue;
+      const c = { id: r.id, trip_id: r.trip_id, species: r.species, n: r.n, lat: r.lat, lon: r.lon, t: r.caught_at, why: r.why || [], c: r.conditions, note: r.note, deleted: !!r.deleted_at, u: ru, ev: l?.ev };
+      if (l) Object.assign(l, c); else S.catches.push(c);
+    }
+    const { data: rt, error: e4 } = await sb.from('trips').select('id,started_at,ended_at,nm,track,events,updated_at');
+    if (e4) throw e4;
+    for (const r of rt) {
+      const l = S.trips.find((t) => t.id === r.id), ru = Date.parse(r.updated_at);
+      if (l && (l.u || 0) >= ru) continue;
+      const t = { id: r.id, start: Date.parse(r.started_at), end: r.ended_at ? Date.parse(r.ended_at) : null, nm: r.nm, pts: (r.track || []).map((p) => [p[0] * 1000, p[1], p[2], p[3]]), events: r.events || [], u: ru };
+      if (l) Object.assign(l, t); else S.trips.push(t);
+    }
+    S.trips.sort((a, b) => a.start - b.start);
+    store.set('trips', S.trips); store.set('catches', S.catches); store.set('tripSent', Date.now());
+    tripUi(); tripDraw();
+  } catch (e) { console.warn('trip sync', e); }
+}
+
+// What your catches say about a species: the water you actually caught them in (needs 3+)
+const pctl = (a, p) => { const v = a.filter((x) => x != null && x === x).sort((x, y) => x - y); return v.length ? v[Math.min(v.length - 1, Math.floor(p * (v.length - 1) + 0.5))] : null; };
+function learned(sp) {
+  const cs = (S.catches || []).filter((c) => !c.deleted && c.species === sp && c.c);
+  const n = cs.reduce((s, c) => s + 1, 0); if (n < 3) return null;
+  const col = (k) => cs.map((c) => c.c[k]).filter((x) => x != null), out = { n };
+  const tv = col('T'); if (tv.length >= 3) out.T = [Math.round(pctl(tv, 0.1) - 1), Math.round(pctl(tv, 0.9) + 1)];
+  const fv = col('fm'); if (fv.length >= 3) out.fm = [Math.max(0, Math.round(pctl(fv, 0.1) * 0.8)), Math.round(pctl(fv, 0.9) * 1.2)];
+  const cv = col('chl'); if (cv.length >= 3) out.chl = [+(pctl(cv, 0.1) * 0.8).toFixed(2), +(pctl(cv, 0.9) * 1.25).toFixed(2)];
+  const kv = col('kt'); if (kv.length >= 3) out.kt = [0, +(pctl(kv, 0.9) + 0.3).toFixed(1)];
+  const bv = col('brk'); if (bv.length >= 3) out.onBreak = bv.filter((x) => x >= 0.2).length / bv.length;
+  const tally = {}; for (const c of cs) for (const w of c.why || []) tally[w] = (tally[w] || 0) + 1;
+  out.why = Object.fromEntries(Object.entries(tally).map(([k, v]) => [k, v / n]));
+  return out;
+}
+// Species settings for Where to fish, nudged by your catches: your temp window, and more weight on what you say finds fish
+function tunedSpecies(sp, key) {
+  const L2 = learned(key); if (!L2) return sp;
+  // shrink toward the species' usual window until there are plenty of catches (3 catches = half and half)
+  const mix = (mine, usual) => Math.round((mine * L2.n + usual * 3) / (L2.n + 3) * 2) / 2;
+  const lo = L2.T ? mix(L2.T[0], sp.t[1]) : sp.t[1], hi = L2.T ? mix(L2.T[1], sp.t[2]) : sp.t[2];
+  const t = L2.T ? [Math.min(sp.t[0], lo - 3), lo, hi, Math.max(sp.t[3], hi + 3)] : sp.t;
+  const w = { ...sp.w }, sum = Object.values(sp.w).reduce((s, x) => s + x, 0), y = L2.why || {};
+  if ((y['Temp break'] || 0) >= 0.3 || (L2.onBreak || 0) >= 0.5) w.brk += 0.1;
+  if ((y['Color change'] || 0) >= 0.3) w.chl += 0.1;
+  if ((y['Bottom / structure'] || 0) >= 0.3) w.bot += 0.1;
+  if ((y['Current edge'] || 0) >= 0.3) w.eddy += 0.1;
+  const s2 = Object.values(w).reduce((s, x) => s + x, 0); for (const k in w) w[k] = w[k] * sum / s2;
+  return { ...sp, t, w, fm: L2.fm ? Math.min(sp.fm, L2.fm[0]) : sp.fm, tuned: L2 };
+}
+
+// panel wiring
+$('btnTrip').onclick = () => { const open = $('tripPanel').hidden; ['fishPanel', 'anaPanel', 'fwPanel'].forEach((x) => { $(x).hidden = true; }); $('tripPanel').hidden = !open; tripUi(); };
+$('tripClose').onclick = () => { $('tripPanel').hidden = true; };
+$('tripChip').onclick = () => { $('tripPanel').hidden = false; tripUi(); };
+$('tripGo').onclick = tripStart;
+$('tripEnd').onclick = () => { if (confirm('Stop tracking and review your day?')) tripStop(); };
+$('tripAwake').checked = store.get('tripAwake', true);
+$('tripAwake').onchange = () => { store.set('tripAwake', $('tripAwake').checked); if ($('tripAwake').checked) tripWakeLock(); else { try { TRIP.lock?.release(); } catch (e) { /* none */ } } };
+$('tripSave').onclick = tripSaveDay;
+$('tripDiscard').onclick = () => { if (!TRIP.review) return; if (!TRIP.review.saved && !confirm('Throw this day away? The track and its catches won\'t be saved.')) return;
+  if (!TRIP.review.saved) { S.catches = S.catches.filter((c) => c.trip_id !== TRIP.review.id); store.set('catches', S.catches); }
+  TRIP.review = null; tripUi(); tripDraw(); };
+$('tripEvents').addEventListener('click', (ev) => {
+  const li = ev.target.closest('li[data-i]'); if (!li || !TRIP.review) return; const e = TRIP.review.events[+li.dataset.i];
+  if (ev.target.classList.contains('chip')) { const w = ev.target.dataset.w; e.why = e.why.includes(w) ? e.why.filter((x) => x !== w) : [...e.why, w]; ev.target.classList.toggle('on'); }
+  if (ev.target.classList.contains('tc-go')) {
+    const box = ev.target.closest('.tc-add'); let sp = box.querySelector('.tc-sp').value;
+    if (sp === '__other') sp = (prompt('What species?') || '').trim().slice(0, 40);
+    if (!sp) return; addCatch(sp, +box.querySelector('.tc-n').value, e.lat, e.lon, +li.dataset.i);
+  }
+  if (ev.target.classList.contains('tc-del')) tripDelCatch(ev.target.dataset.id);
+});
+$('tripEvents').addEventListener('input', (ev) => { if (!ev.target.classList.contains('tc-note')) return; const li = ev.target.closest('li[data-i]'); TRIP.review.events[+li.dataset.i].note = ev.target.value.slice(0, 300); });
+$('tripOther').addEventListener('click', (ev) => { if (ev.target.classList.contains('tc-del')) tripDelCatch(ev.target.dataset.id); });
+function tripDelCatch(id) { const c = S.catches.find((x) => x.id === id); if (!c) return; c.deleted = true; c.u = Date.now(); store.set('catches', S.catches); tripUi(); tripDraw(); tripSync(); }
+// "Add a catch on the map": the next tap on the chart drops it there
+document.querySelectorAll('.tripPin').forEach((b) => { b.onclick = () => {
+  // while tracking, log it right where the boat is; otherwise the next tap on the chart places it
+  const last = S.trip?.pts[S.trip.pts.length - 1];
+  if (S.trip && last && b.closest('#tripLive')) { const sp = prompt(`What did you catch? (${speciesNear(last[1], last[2]).map(spLabel).join(', ')})`); if (sp) { const k = speciesNear(last[1], last[2]).find((x) => spLabel(x).toLowerCase() === sp.trim().toLowerCase()) || sp.trim(); addCatchLive(k, last); } return; }
+  TRIP.pinning = true; status('Tap the chart where you caught it.');
+}; });
+map.on('click', (e) => {
+  if (!TRIP.pinning) return; TRIP.pinning = false; status('');
+  const keys = speciesNear(e.latlng.lat, e.latlng.lng), ans = prompt(`What did you catch here?\n${keys.map((k, i) => `${i + 1}. ${spLabel(k)}`).join('\n')}\n\nType a number or a name, then how many (e.g. "1 x3").`);
+  if (!ans) return;
+  const m = ans.trim().match(/^(.+?)(?:\s*x\s*(\d+))?$/i), pick = m[1].trim(), k = /^\d+$/.test(pick) ? keys[+pick - 1] : (keys.find((x) => spLabel(x).toLowerCase() === pick.toLowerCase()) || pick);
+  if (k) addCatch(k, +(m[2] || 1), e.latlng.lat, e.latlng.lng, null);
+});
+if (S.trip) { tripWatch(); }
+tripUi(); tripDraw();
+ACCT_HOOK.trips = tripSync;
 
 // ---------- Offshore pack: save the last 48 hours of every chart for your area, for use with no signal ----------
 // Everything comes from Breakline's saved copies (GitHub Pages). The service worker serves these files from its
@@ -4095,6 +4406,17 @@ $('fwFill').onclick = () => {
   if (!sp.inshore) Object.assign(S.fw.depth, { on: true, lo: sp.fm || null, hi: null });
   store.set('fw', S.fw); fwToUi();
   $('fwMsg').textContent = `Temp ${sp.t[1]}-${sp.t[2]}°F${sp.inshore ? '' : ` and ${sp.fm}+ fm`} for ${sp.label.toLowerCase()}.`; $('fwMsg').classList.remove('err');
+};
+$('fwMine').onclick = () => {
+  const L2 = learned(S.species), lbl = (SPECIES[S.species]?.label || S.species).toLowerCase();
+  if (!L2) { $('fwMsg').textContent = `Log at least 3 ${lbl} with Track my day first (Trip button on the left).`; $('fwMsg').classList.remove('err'); return; }
+  if (L2.T) Object.assign(S.fw.temp, { on: true, lo: L2.T[0], hi: L2.T[1] });
+  if (L2.fm) Object.assign(S.fw.depth, { on: true, lo: L2.fm[0], hi: L2.fm[1] });
+  if (L2.chl) Object.assign(S.fw.chl, { on: true, lo: L2.chl[0], hi: L2.chl[1] });
+  if (L2.kt) Object.assign(S.fw.cur, { on: true, lo: null, hi: L2.kt[1] });
+  if ((L2.onBreak || 0) >= 0.5) Object.assign(S.fw.front, { on: true, mode: 'on' });
+  store.set('fw', S.fw); fwToUi();
+  $('fwMsg').textContent = `Set from your ${L2.n} ${lbl} catches.`; $('fwMsg').classList.remove('err');
 };
 $('fwClear').onclick = () => { S.fwHits = null; $('fwList').innerHTML = ''; $('fwMsg').textContent = ''; chart.draw(); };
 $('btnFind').onclick = () => {
