@@ -27,6 +27,10 @@
       "destination": "/app.html"
     },
     {
+      "source": "/guide",
+      "destination": "/guide.html"
+    },
+    {
       "source": "/marlin-fishing-charts",
       "destination": "/marlin-fishing-charts.html"
     },

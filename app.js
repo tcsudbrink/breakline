@@ -1794,7 +1794,7 @@ function buildFish() {
     if (cur[k] === cur[k]) why.push(`${cur[k].toFixed(1)} kt current`);
     if (pb > 0.6) why.push('on a temp break'); if (pc > 0.6) why.push('color edge'); if (po > 0.6) why.push('steep bottom / canyon wall'); if (pe > 0.6) why.push('eddy edge');
     why.push(`${Math.round(-dep[k] / FATHOM).toLocaleString()} fm`);
-    spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why });
+    spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why, d: { T: T[k], tf: tempFit(T[k], sp.t), ok: [sp.t[1], sp.t[2]], hourly: !!hourly[k], kt: cur[k], fm: -dep[k] / FATHOM, pb, pc, po, pe } });
     if (spots.length >= 8) break;
   }
   S.data.fish = { ...g, v: score, date: (S.data.goes?.date || sst.date), times: S.data.goes?.times?.slice(-1) };
@@ -1950,7 +1950,7 @@ function renderSpots() {
   if (ins) {
     $('fishBasis').textContent = `Inshore picks: inlets, jetties, piers, reefs, shoals${map.getZoom() >= 12 ? ' and drop-offs (NOAA high-res bottom)' : ''} on screen, scored on water temp and depth for ${SPECIES[S.species].label.toLowerCase()}.${map.getZoom() < 12 ? ' Zoom in closer to add drop-offs.' : ''} Each pick lists the tides at the nearest NOAA station and when to fish them, the solunar periods (★ = lines up with that tide), and the wind.`;
   } else $('fishBasis').textContent = (learned(S.species) ? `Tuned to your ${learned(S.species).n} logged catches. ` : '') + (fi ? `Water temp: hourly GOES${fi.hour ? ` (${niceHour(fi.hour)})` : ''} for ${fi.hourlyPct}% of the area, daily cloud-free for the rest. ${fi.cur ? 'Strong current (over ~1.2 kt) counts against a spot; nothing over 2 kt is listed.' : 'Currents not loaded.'}` : '');
-  el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openReading(L.latLng(s.lat, s.lon), `Hot spot ${+li.dataset.i + 1}`); }; });
+  el.querySelectorAll('li[data-i]').forEach((li) => { li.onclick = () => { const s = S.fishSpots[+li.dataset.i]; map.setView([s.lat, s.lon], Math.max(map.getZoom(), SPECIES[S.species]?.inshore ? 13 : 9)); openPick({ lat: s.lat, lon: s.lon, ...hotWhy(s, +li.dataset.i) }); }; });
 }
 
 // ---------- Ocean analysis: outline the features, then write up the water and where to go ----------
@@ -3357,13 +3357,13 @@ function nowConditions(lat, lon) {
   NOWC.set(key, p);
   return p;
 }
-function openReading(latlng, title) {
+function openReading(latlng, title, pick) {
   const { lat, lng } = latlng;
   // Build the popup as a DOM element (not an HTML string): Leaflet re-renders string content when it pans
   // the map to fit the popup, which would drop these button handlers.
   const el = document.createElement('div'); el.className = 'pp';
-  el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div><table></table>
-    <div class="save"><input class="ppName" placeholder="Spot name" value="Spot ${S.wpts.length + 1}"><button class="ppSave">Save</button></div>
+  el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div>${pick ? `<div class="pp-why">${pick.html}</div>` : ''}<table></table>
+    <div class="save"><input class="ppName" placeholder="Spot name" value="${esc(pick ? pick.name : `Spot ${S.wpts.length + 1}`)}"><button class="ppSave">${pick ? 'Save as spot' : 'Save'}</button></div>
     <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><button class="ppMatch">Find this water again</button><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
   const rowEls = ([k, v, info]) => {
@@ -3404,8 +3404,9 @@ function openReading(latlng, title) {
     const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
     const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
     S.wpts.push({ id: newId(), u: Date.now(), name, lat: +lat.toFixed(5), lon: +lng.toFixed(5), t: new Date().toISOString(),
-      sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}` });
+      sst: sst === sst ? +sst.toFixed(1) : null, fm: z === z && z < 0 ? Math.round(-z / FATHOM) : null, td: `${S.tdPair}:${ta.toFixed(1)}/${tb.toFixed(1)}`, note: pick ? pick.note.slice(0, 500) : undefined });
     saveWpts(); map.closePopup(pop);
+    if (pick) status(`Saved "${name}" to your spots.`);
   };
   pop.openOn(map);
 }
@@ -3447,6 +3448,7 @@ $('measureDone').onclick = () => { MEAS.on = false; clearMeasure(); MEAS.btn.cla
 map.on('click', (e) => {
   if (TRIP.pinning) return;                       // Track my day: this tap places a catch
   if (MEAS.on) { MEAS.pts.push([e.latlng.lat, e.latlng.lng]); drawMeasure(); return; }
+  const pk = pickAt(e.containerPoint); if (pk) { openPick(pk); return; }
   openReading(e.latlng);
 });
 
@@ -3471,7 +3473,7 @@ function drawWpts() {
     L.marker([w.lat, w.lon], { icon: L.divIcon({ className: '', html: '<div class="wpt-icon"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) })
       .bindTooltip(w.name, { permanent: true, direction: 'right', offset: [8, 0], className: 'wpt-label' }).addTo(wLayer);
     const li = document.createElement('li');
-    li.innerHTML = `<b>${w.name.replace(/</g, '&lt;')}</b><small>${fmtLL(w.lat, w.lon)}<br>TD ${fmtTd(w.lat, w.lon)}${w.sst ? ` · ${w.sst}°F` : ''}${w.fm ? ` · ${w.fm} fm` : ''}</small><button title="Delete">&times;</button>`;
+    li.innerHTML = `<b>${w.name.replace(/</g, '&lt;')}</b><small>${fmtLL(w.lat, w.lon)}<br>TD ${fmtTd(w.lat, w.lon)}${w.sst ? ` · ${w.sst}°F` : ''}${w.fm ? ` · ${w.fm} fm` : ''}${w.note ? `<br><i>${w.note.replace(/</g, '&lt;')}</i>` : ''}</small><button title="Delete">&times;</button>`;
     li.querySelector('b').onclick = () => map.setView([w.lat, w.lon], Math.max(map.getZoom(), 9));
     li.querySelector('button').onclick = () => { S.wpts.splice(i, 1); saveWpts(); };
     list.appendChild(li);
@@ -3774,6 +3776,68 @@ syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
 
+// ---------- Numbered picks: tap a yellow (Where to fish) or blue (Find your water) circle to see why, and save it as a spot ----------
+const RUN_KT = 25;
+const runTxt = (d) => `about ${(d / RUN_KT).toFixed(1)} h at ${RUN_KT} kt`;
+const dayTxt = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function hotWhy(s, i) {
+  const spc = SPECIES[S.species], nm = spc ? spc.label.toLowerCase() : 'fish', n = (S.fishSpots || []).length;
+  const home = PORTS.find((x) => x[0] === S.home), [dist, brg] = home ? rangeBearing([home[1], home[2]], [s.lat, s.lon]) : [NaN, NaN];
+  const pts = [], tips = [];
+  if (s.d) {
+    const d = s.d, [ok0, ok1] = d.ok;
+    pts.push(d.tf >= 1 ? `<b>${d.T.toFixed(1)}°F</b> is right in the ${nm} sweet spot (${ok0}-${ok1}°F).` : `<b>${d.T.toFixed(1)}°F</b> is fishable for ${nm}, just off their best range (${ok0}-${ok1}°F).`);
+    if (!d.hourly) pts.push('Clouds hid the hourly satellite here, so that temp is from the daily blend: check it when you get there.');
+    if (d.pb > 0.6) { pts.push('<b>On a temperature break:</b> the water changes fast within a couple of miles. Bait piles up on breaks and predators patrol them.'); tips.push('Troll along the break, warm side first, and watch for birds, bait and weed.'); }
+    else if (d.pb > 0.3) pts.push('A weaker temp break runs close by.');
+    if (d.pc > 0.6) { pts.push('<b>On a color edge:</b> blue water meets greener, food-rich water here.'); tips.push('Work the line where blue meets green.'); }
+    if (d.po > 0.6) { pts.push('<b>Steep bottom:</b> a canyon wall, ledge or the shelf edge pushes current and bait up.'); tips.push('Start on the up-current side of the drop.'); }
+    if (d.pe > 0.6) { pts.push('<b>On an eddy edge:</b> current runs here and warm and cool water meet.'); tips.push('Fish the edge of the eddy, not the middle.'); }
+    if (d.kt === d.kt) pts.push(d.kt <= 1.2 ? `${d.kt.toFixed(1)} kt of current: easy to fish.` : `${d.kt.toFixed(1)} kt of current: strong, so expect a fast drift.`);
+    pts.push(`${Math.round(d.fm).toLocaleString()} fm of water.`);
+    const W = { brk: 'temp breaks', chl: 'color edges', bot: 'steep bottom', eddy: 'eddy edges' }, top = Object.entries(spc?.w || {}).sort((a, b) => b[1] - a[1])[0];
+    if (top) pts.push(`For ${nm}, Breakline weighs ${W[top[0]]} the most.`);
+  } else pts.push(...s.why.map((x) => esc(x)));
+  if (learned(S.species)) pts.push(`Tuned to your ${learned(S.species).n} logged ${nm}.`);
+  if (dist === dist) pts.push(`${dist.toFixed(0)} nm @ ${Math.round(brg)}°T from ${esc(S.home)}, ${runTxt(dist)}.`);
+  if (!tips.length) tips.push(spc?.inshore ? 'The tides and best times for this spot are in the Where to fish list.' : 'Troll a wide pattern through the area and look for bait, birds and weed.');
+  return {
+    title: `Hot spot ${i + 1} for ${nm}`,
+    html: `<b>Why go here:</b> #${i + 1} of ${n}, scores <b>${s.score}/100</b>.<ul>${pts.map((x) => `<li>${x}</li>`).join('')}</ul><b>What to do:</b> ${tips.join(' ')}`,
+    name: `${spc ? spc.label : 'Hot spot'} ${i + 1} · ${dayTxt()}`,
+    note: `Where to fish #${i + 1} for ${nm}, ${s.score}/100 on ${dayTxt()}: ${s.why.join(', ')}`,
+  };
+}
+function fwWhy(a, i) {
+  const h = S.fwHits, f = S.fw, port = f.port || S.home, fmt1 = (x) => x.toFixed(1), fm0 = (x) => Math.round(x).toLocaleString();
+  const pts = [];
+  if (a.span.T) pts.push(`Water temp ${fwRange(...a.span.T, fmt1)}°F`);
+  if (a.span.chl) pts.push(`Color ${fwRange(...a.span.chl, (x) => x.toFixed(2))} mg/m³`);
+  if (a.span.fm) pts.push(`${fwRange(...a.span.fm, fm0)} fm deep`);
+  if (a.span.kt) pts.push(`Current ${fwRange(...a.span.kt, fmt1)} kt`);
+  if (a.span.mld) pts.push(`Mixed layer ${fwRange(...a.span.mld, fm0)} ft`);
+  if (a.span.sal) pts.push(`Salinity ${fwRange(...a.span.sal, (x) => x.toFixed(2))} PSU`);
+  if (f.front?.on) pts.push(f.front.mode === 'off' ? 'Away from temp breaks' : 'On a temperature break');
+  if (f.sal?.on && f.sal.mode === 'edge') pts.push('On a salinity edge');
+  pts.push(`${a.dist.toFixed(0)} nm @ ${Math.round(a.brg)}°T from ${esc(port)}, ${runTxt(a.dist)}`);
+  const nm2 = a.nm2 < 10 ? a.nm2.toFixed(1) : Math.round(a.nm2).toLocaleString();
+  return {
+    title: `Water match ${i + 1}`,
+    html: `<b>Why go here:</b> about <b>${nm2} sq nm</b> of water that fits every setting in your Find your water search (#${i + 1} of ${h.areas.length}, biggest first).<ul>${pts.map((x) => `<li>${x}</li>`).join('')}</ul><b>What to do:</b> the circle marks the middle of the patch; the whole shaded area matches. Patches move with the current, so work toward the side the current is pushing it.`,
+    name: `Water match ${i + 1} · ${dayTxt()}`,
+    note: `Find your water match ${i + 1} on ${dayTxt()}: ${pts.join(', ').replace(/<[^>]+>/g, '')}`,
+  };
+}
+function pickAt(pt) {
+  // nearest numbered circle under the tap; blue (Find your water) wins a tie since it draws on top
+  const R = L.Browser.mobile ? 18 : 13; let best = null;
+  const look = (lat, lon, mk, bias) => { const [x, y] = project(lat, lon), d = Math.hypot(x - pt.x, y - pt.y) - bias; if (d <= R && (!best || d < best.d)) best = { d, mk }; };
+  (S.fwHits?.areas?.slice(0, 15) || []).forEach((a, i) => look(a.lat, a.lon, () => ({ lat: a.lat, lon: a.lon, ...fwWhy(a, i) }), 0.5));
+  if (S.prod === 'fish' || S.prod === 'ana') (S.fishSpots || []).forEach((s, i) => look(s.lat, s.lon, () => ({ lat: s.lat, lon: s.lon, ...hotWhy(s, i) }), 0));
+  return best ? best.mk() : null;
+}
+function openPick(p) { openReading(L.latLng(p.lat, p.lon), p.title, p); }
+
 // ---------- Layer guide: the ⓘ next to the legend title explains the chart you're looking at ----------
 // what = what the colors are, good = what fishermen look for, watch = limits of the data.
 const LAYER_GUIDE = {
@@ -3870,7 +3934,8 @@ function guideHtml(k) {
   return `<div class="li-hd"><b>${p.name}</b><button class="ghost li-x" aria-label="Close">✕</button></div>`
     + `<h4>What you're looking at</h4><p>${g.what}</p>`
     + `<h4>What's best for fishing</h4><ul>${g.good.map((x) => `<li>${x}</li>`).join('')}</ul>`
-    + (g.watch ? `<h4>Keep in mind</h4><p>${g.watch}</p>` : '');
+    + (g.watch ? `<h4>Keep in mind</h4><p>${g.watch}</p>` : '')
+    + `<p class="li-more"><a href="/guide#${k}" target="_blank" rel="noopener">Full tutorial &rarr;</a></p>`;
 }
 function guideShow(open) {
   const el = $('layerInfo'), k = S.prod;
@@ -4588,7 +4653,7 @@ async function findWater() {
       li.onclick = () => {
         const a = S.fwHits.areas[+li.dataset.i], pad = FW_CELL * 2;
         map.fitBounds([[a.bb[0] - pad, a.bb[1] - pad], [a.bb[2] + pad, a.bb[3] + pad]], { maxZoom: 10, padding: [30, 30] });
-        openReading(L.latLng(a.lat, a.lon), `Match ${+li.dataset.i + 1}`);
+        openPick({ lat: a.lat, lon: a.lon, ...fwWhy(a, +li.dataset.i) });
       };
     });
   } catch (e) {

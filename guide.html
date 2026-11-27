@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1622">
+<title>How to use Breakline · Tutorials for every feature</title>
+<meta name="description" content="Step-by-step tutorials for every Breakline feature: water temp, hourly scans, color, altimetry, currents, salinity, mixed layer, oxygen, fronts, Where to fish, Find your water, water alerts, Track my day, spots, Loran and offshore mode.">
+<meta property="og:title" content="How to use Breakline">
+<meta property="og:description" content="Step-by-step tutorials for every feature, from reading a temp break to getting an email when your water shows up.">
+<meta property="og:image" content="https://www.breaklinefishing.com/img/sst.jpg">
+<link rel="icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="site.css">
+<link rel="canonical" href="https://www.breaklinefishing.com/guide">
+<script src="track.js"></script>
+<style>
+  .guide { display: grid; grid-template-columns: 240px 1fr; gap: clamp(24px, 4vw, 56px); max-width: 1240px; margin: 0 auto; padding: clamp(32px, 5vw, 64px) clamp(16px, 4vw, 48px) 80px; }
+  .toc { position: sticky; top: 84px; align-self: start; max-height: calc(100vh - 110px); overflow-y: auto; font-size: 14px; }
+  .toc h4 { margin: 18px 0 6px; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .toc h4:first-child { margin-top: 0; }
+  .toc a { display: block; padding: 3px 0 3px 10px; color: #c4d1de; text-decoration: none; border-left: 2px solid transparent; }
+  .toc a:hover { color: #fff; border-left-color: var(--accent); }
+  .tut { scroll-margin-top: 84px; padding: 28px 0; border-top: 1px solid var(--line); }
+  .tut:first-of-type { border-top: 0; padding-top: 0; }
+  .tut h2 { font-size: clamp(22px, 2.6vw, 28px); margin: 0 0 6px; }
+  .tut .for { color: #c4d1de; margin: 0 0 14px; max-width: 46em; }
+  .tut ol { margin: 0; padding-left: 22px; max-width: 46em; }
+  .tut ol li { margin: 7px 0; color: #dde6ee; }
+  .tut ol li::marker { color: var(--accent); font-weight: 800; }
+  .tut .tip { margin: 14px 0 0; max-width: 46em; padding: 10px 14px; border-left: 3px solid #fbe36a; background: rgba(251,227,106,.06); border-radius: 6px; color: #dde6ee; font-size: 15px; }
+  .tut .tip b { color: #fbe36a; }
+  .btnlbl { display: inline-block; padding: 0 7px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.05); font-size: .9em; font-weight: 700; white-space: nowrap; color: #fff; }
+  .intro h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 44px); }
+  .intro p { color: #c4d1de; max-width: 44em; margin: 0 0 8px; }
+  .group { margin: 48px 0 0; font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 800; }
+  @media (max-width: 860px) { .guide { grid-template-columns: 1fr; } .toc { position: static; max-height: none; columns: 2; } .toc h4 { break-after: avoid; } }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="/"><img src="icon.svg" alt="" width="30" height="30"><span>Breakline</span></a>
+  <nav class="links">
+    <a href="/#how">How it works</a>
+    <a href="/#data">The data</a>
+    <a href="/guide">Tutorials</a>
+    <a href="/#coverage">Coverage</a>
+    <a href="/#pricing">Pricing</a>
+    <a href="/#faq">FAQ</a>
+  </nav>
+  <div class="cta">
+    <a class="btn ghost" href="/app">Sign in</a>
+    <a class="btn" href="/app?signup">Free trial</a>
+  </div>
+</header>
+
+<div class="guide">
+<aside class="toc" aria-label="Tutorials">
+  <h4>Start here</h4>
+  <a href="#start">Getting set up</a>
+  <a href="#tap">Reading any spot</a>
+  <a href="#legend">The color bar and the i button</a>
+  <a href="#dates">Dates, passes and forecasts</a>
+  <h4>Chart layers</h4>
+  <a href="#sst">Water temp</a>
+  <a href="#goes">Hourly temp</a>
+  <a href="#chl">Color (chlorophyll)</a>
+  <a href="#ssh">Altimetry</a>
+  <a href="#cur">Currents</a>
+  <a href="#sss">Salinity</a>
+  <a href="#mld">Mixed layer</a>
+  <a href="#o2">Oxygen</a>
+  <a href="#ftle">Fronts (FSLE)</a>
+  <a href="#wx">Weather</a>
+  <a href="#bottom">Bottom</a>
+  <a href="#overlays">Overlays</a>
+  <h4>Finding fish</h4>
+  <a href="#fish">Where to fish</a>
+  <a href="#picks">The numbered circles</a>
+  <a href="#ana">Ocean analysis</a>
+  <a href="#find">Find your water</a>
+  <a href="#alerts">Water alerts</a>
+  <a href="#times">Best times and tides</a>
+  <h4>On the boat</h4>
+  <a href="#trip">Track my day</a>
+  <a href="#spots">Spots and GPX</a>
+  <a href="#loran">Loran TDs</a>
+  <a href="#measure">Measuring a run</a>
+  <a href="#offshore">Offshore, no signal</a>
+  <a href="#backup">When NOAA is down</a>
+</aside>
+
+<main>
+<div class="intro">
+  <p class="kicker">Tutorials</p>
+  <h1>How to use Breakline</h1>
+  <p>A short walk-through for every feature. Each one says what it's for, then the taps to do it. Button names are in <span class="btnlbl">boxes</span> just like they look in the app.</p>
+  <p>Everything below works the same on a phone, tablet or computer.</p>
+</div>
+
+<p class="group">Start here</p>
+
+<section class="tut" id="start">
+  <h2>Getting set up</h2>
+  <p class="for">Two minutes to set your home port and put Breakline on your phone's home screen.</p>
+  <ol>
+    <li>Go to <a href="/app?signup">breaklinefishing.com/app</a> and create your account. Pick your home port on the sign-up form.</li>
+    <li>Your home port sits at the top left of the chart. Range, bearing, run limits and Where to fish are all measured from it, so change it whenever you trailer somewhere else.</li>
+    <li>Use <span class="btnlbl">Jump to…</span> beside it to fly to any fishing area: the canyons, the Gulf Stream off Hatteras, the Bahamas, Cabo, Costa Rica and more.</li>
+    <li>Pick a chart from the bar down the left side: <span class="btnlbl">Temp</span>, <span class="btnlbl">Hourly</span>, <span class="btnlbl">Color</span>, <span class="btnlbl">Altimetry</span> and so on. One chart shows at a time, like the paid chart services.</li>
+    <li><b>Put it on your phone:</b> on iPhone, open the site in Safari, tap Share, then <b>Add to Home Screen</b>. On Android, open it in Chrome, tap the ⋮ menu, then <b>Add to Home screen</b> or <b>Install app</b>. It then opens full screen like an app.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> your spots, home port and settings are saved to your account, so they follow you to every phone and computer you sign in on.</p>
+</section>
+
+<section class="tut" id="tap">
+  <h2>Reading any spot</h2>
+  <p class="for">Tap anywhere on the water and Breakline tells you everything it knows about that spot, in plain English.</p>
+  <ol>
+    <li>Tap the chart. A box opens with the position, wind and seas right now, and every reading that's loaded: water temp, color, altimetry, current, depth and more.</li>
+    <li>Tap the small <span class="btnlbl">i</span> next to any reading to see what it means and what to expect there (for example, "you are on a temperature break, fish the warm side").</li>
+    <li><span class="btnlbl">Best times here</span> shows the solunar periods, sunrise, sunset and tides for that spot. <span class="btnlbl">Weather forecast</span> shows wind and seas by the hour.</li>
+    <li>Type a name and tap <span class="btnlbl">Save</span> to keep it as a spot.</li>
+    <li><span class="btnlbl">Find this water again</span> copies that spot's temp, color, depth and break into Find your water, so you can see where that same water is now or get an alert when it comes back (see <a href="#alerts">Water alerts</a>).</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> on a computer, just move the mouse: the box at the bottom left shows the reading under the pointer without tapping.</p>
+</section>
+
+<section class="tut" id="legend">
+  <h2>The color bar and the i button</h2>
+  <p class="for">The bar at the bottom right is the key to the chart, and it lets you stretch the colors so small breaks stand out.</p>
+  <ol>
+    <li>Tap the round <span class="btnlbl">i</span> beside the chart name to open a short guide: what you're looking at, what's best for fishing, and the limits of the data.</li>
+    <li>Drag the two white handles toward each other to spend all the colors on a narrow range. For example, set water temp to 72-78°F and a 1-degree break turns into a sharp color change.</li>
+    <li>Tap <span class="btnlbl">Auto</span> to fit the colors back to whatever is on screen.</li>
+    <li>The right side of the bar says how old the data is, and says <b>saved copy</b> when NOAA isn't answering and you're on Breakline's own backup.</li>
+  </ol>
+</section>
+
+<section class="tut" id="dates">
+  <h2>Dates, passes and forecasts</h2>
+  <p class="for">Look back at older charts, pick a single satellite pass, or look ahead at the forecast.</p>
+  <ol>
+    <li>Use <span class="btnlbl">◀</span> and <span class="btnlbl">▶</span> at the top to step back and forward a day (an hour on Hourly). Tap the date to pick any day.</li>
+    <li>Tap <span class="btnlbl">Charts ▾</span> to see every satellite pass and product for this area as thumbnails. Clouds show as blank, so you can pick the clearest look in one tap. Switch between <span class="btnlbl">Water temp</span>, <span class="btnlbl">Hourly temp</span> and <span class="btnlbl">Chlorophyll</span> along the top.</li>
+    <li>On Currents, Temp and Hourly, keep tapping <span class="btnlbl">▶</span> past today to step into the forecast in 6-hour jumps (up to 7 days for currents, 3 days for temp).</li>
+    <li><span class="btnlbl">Latest</span> takes you back to now.</li>
+  </ol>
+</section>
+
+<p class="group">Chart layers</p>
+
+<section class="tut" id="sst">
+  <h2>Water temp</h2>
+  <p class="for">The first chart most fishermen check: temperature breaks are where bait collects and predators hunt.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Temp</span>. Breaks show as places where the colors bunch up tight.</li>
+    <li>Open <span class="btnlbl">Charts ▾</span> to choose the source. Single passes (morning, afternoon, night) are the sharpest but have cloud holes. The cloud-free blends fill the holes but smooth out small breaks. The 1-day and 3-day composites keep the newest clear look for every spot.</li>
+    <li>Drag the color bar handles around the temps your species likes so the breaks pop.</li>
+    <li>Turn on <b>Temperature breaks</b> in <span class="btnlbl">Layers</span> to have Breakline outline them for you. The sensitivity slider adds more or fewer.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> work the warm side of a break, especially where it crosses a canyon head or the 100 fathom curve.</p>
+</section>
+
+<section class="tut" id="goes">
+  <h2>Hourly temp</h2>
+  <p class="for">Fresh temps from the GOES-19 weather satellite, which looks at the whole coast every hour.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Hourly</span>. Each spot shows the newest clear look from the last 24 hours.</li>
+    <li>Step through the hours with <span class="btnlbl">◀</span> <span class="btnlbl">▶</span> to watch a break or eddy edge move, then set up ahead of it.</li>
+    <li>Check it the morning you go: a break can move several miles overnight in the Gulf Stream.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> it's coarser than the polar passes (about 2 km), so use Hourly to see where things are now and Temp to see the fine detail.</p>
+</section>
+
+<section class="tut" id="chl">
+  <h2>Color (chlorophyll)</h2>
+  <p class="for">Water color from space: blue is clean and low on food, green is full of plankton and bait. The line between them is one of the best signs offshore.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Color</span>. Purple and blue is clean blue water, green and yellow is plankton-rich, orange and red is dirty coastal water.</li>
+    <li>Look for color edges: blue meeting green within a mile or two.</li>
+    <li>Use <span class="btnlbl">Charts ▾</span> to pick a single clear pass, or the gap-free products when it's cloudy. Check the date on the color bar.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> for billfish and tuna, fish the blue side of the edge, around 0.1-0.3 mg/m³. A color edge that lines up with a temp break is the best of both.</p>
+</section>
+
+<section class="tut" id="ssh">
+  <h2>Altimetry</h2>
+  <p class="for">Satellite radar measures how high the sea surface sits. That shows eddies and the Gulf Stream even under clouds.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Altimetry</span>. Red (+) is high water: a warm eddy or the Stream, turning clockwise. Blue (-) is low water: a cold eddy, turning counterclockwise.</li>
+    <li>Turn on <b>Altimetry rings (eddies)</b> in <span class="btnlbl">Layers</span> to outline the eddies on any chart, including Temp and Color.</li>
+    <li>Fish the edges, where the colors bunch up: that's where the current runs fastest.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> on a cloudy week when Temp is blank, Altimetry still tells you where the warm water is.</p>
+</section>
+
+<section class="tut" id="cur">
+  <h2>Currents</h2>
+  <p class="for">How fast the water is moving and which way, for planning your drift, your spread, and which way a break will move.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Currents</span>. Colors are speed in knots; arrows show direction.</li>
+    <li>Pick a source in the bar at the top: <span class="btnlbl">Satellite</span> (measured, with HF radar near the coast), <span class="btnlbl">HYCOM</span> or <span class="btnlbl">RTOFS</span> (ocean models that cover everywhere).</li>
+    <li>Tap <span class="btnlbl">▶</span> past today to see the current forecast up to a week out.</li>
+    <li>Turn on <b>Currents</b> in <span class="btnlbl">Layers</span> to put the arrows on top of any other chart.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> when the two models disagree about where the Stream edge is, and HF radar covers your area, trust the radar.</p>
+</section>
+
+<section class="tut" id="sss">
+  <h2>Salinity</h2>
+  <p class="for">How salty the water is. A sharp change in saltiness marks the edge between two bodies of water, even when the temps have evened out.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Salinity</span>. Blue is salty open-ocean water (Gulf Stream, 36 and up); brown is fresher shelf and river water.</li>
+    <li>Use the <span class="btnlbl">Depth</span> menu at the top to look below the surface, down to about 1,000 ft.</li>
+    <li>Look for salinity edges and river plumes (the Mississippi, the Chesapeake). Weed, bait and mahi line up along plume edges.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> the surface reading is coarse and can't see close to land. Use it for the big picture, then fine-tune on Temp and Color.</p>
+</section>
+
+<section class="tut" id="mld">
+  <h2>Mixed layer</h2>
+  <p class="for">How deep the warm surface layer goes before the water turns cold. It tells you how deep the fish can be.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Mix layer</span>. Light colors are shallow, dark colors are deep.</li>
+    <li>Shallow (under about 100-150 ft): bait and fish are pinned near the surface. Good for trolling and topwater.</li>
+    <li>Deep (200 ft and more): fish can spread out and go down. Run planers, downriggers or deep divers, or drop.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> NOAA doesn't compute it over most of the continental shelf, and not at all in the Pacific, so blank areas are normal.</p>
+</section>
+
+<section class="tut" id="o2">
+  <h2>Oxygen</h2>
+  <p class="for">How much oxygen is dissolved in the water, from the Copernicus ocean model. Tuna and billfish burn a lot of it, so low-oxygen water at depth pushes them up.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Oxygen</span>, then use the <span class="btnlbl">Depth</span> menu at the top. The surface is almost always fine; the deeper levels are where this chart earns its keep.</li>
+    <li>Set the depth to 150-300 ft. Orange and red there means low oxygen close to the surface: fish get squeezed into the top layer and are easier to raise on the troll.</li>
+    <li>Blue at depth means plenty of oxygen, so fish can spread out and go deep.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> this matters most in the eastern Pacific (Costa Rica, Panama, Guatemala, Chiapas, Cabo). Off the U.S. East Coast it barely changes.</p>
+</section>
+
+<section class="tut" id="ftle">
+  <h2>Fronts (FSLE)</h2>
+  <p class="for">Breakline works out from the last several days of currents where water is being pushed together into lines. Weed, debris and bait collect on those lines.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Fronts</span>. The bright ridges are convergence lines.</li>
+    <li>Compare with Temp or Color: a bright ridge that lines up with a break is a front that's real and being fed.</li>
+    <li>Use it on cloudy days. It comes from currents, not pictures, so clouds don't matter.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> it's coarse (about 15 nm). Use it to choose which area to run to, then find the exact edge on Temp or Color.</p>
+</section>
+
+<section class="tut" id="wx">
+  <h2>Weather</h2>
+  <p class="for">Wind and wave forecasts across the whole run, not just at the beach.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Weather</span>, then <span class="btnlbl">Wind</span> or <span class="btnlbl">Waves</span> at the top.</li>
+    <li>Step ahead with <span class="btnlbl">▶</span> to find your weather window.</li>
+    <li>For a single spot, tap it and choose <span class="btnlbl">Weather forecast</span> for an hour-by-hour table.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> watch for wind blowing against the current, like a northeaster on the Gulf Stream: it stands the seas up. Always check the NOAA marine forecast before you go.</p>
+</section>
+
+<section class="tut" id="bottom">
+  <h2>Bottom</h2>
+  <p class="for">Shaded bottom relief so canyons, ledges and humps stand out.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Bottom</span> for the full relief chart, or turn on <b>Bottom relief shading</b> and <b>Depth lines</b> in <span class="btnlbl">Layers</span> to put them under any chart.</li>
+    <li>Zoom in close and turn on <b>Drop-offs</b> (orange is steep bottom) and the <b>NOAA nautical chart</b> for channels, buoys and soundings.</li>
+  </ol>
+</section>
+
+<section class="tut" id="overlays">
+  <h2>Overlays</h2>
+  <p class="for">Stack extra information on top of whatever chart you're on.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Layers</span> on the left.</li>
+    <li>Tick what you want: temperature breaks, isotherms every 1°F, eddy rings, currents, depth lines, drop-offs, fishing spots and reefs, wrecks and fish havens, place names, live buoys and inlets.</li>
+    <li>Under <b>Grid</b>, pick lat/long, Loran TDs, both or none.</li>
+  </ol>
+</section>
+
+<p class="group">Finding fish</p>
+
+<section class="tut" id="fish">
+  <h2>Where to fish</h2>
+  <p class="for">Breakline scores every spot inside your run for the species you pick, and marks the best ones.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Where to fish</span> on the left.</li>
+    <li>Pick your species. The list follows your home port (Atlantic, Gulf or Pacific species, plus inshore fish like flounder, stripers, redfish and snook).</li>
+    <li>Set <b>Max run</b> to how far you'll go, and a depth range if you want one.</li>
+    <li>The chart turns into a heat map (yellow is best) with up to 8 numbered yellow circles. The list says why each one scored well and how far it is from your port.</li>
+    <li>Inshore species pick from inlets, jetties, piers, reefs, shoals and drop-offs on screen, with the tides at the nearest station for each one.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> log your catches with <a href="#trip">Track my day</a>. After three or more of a species, the scoring tunes itself to the water you actually caught them in.</p>
+</section>
+
+<section class="tut" id="picks">
+  <h2>The numbered circles</h2>
+  <p class="for">Yellow circles are Where to fish hot spots. Blue circles are Find your water matches. Tap any of them to see why it's worth the run, and save it.</p>
+  <ol>
+    <li>Tap a numbered circle on the chart (or tap it in the list).</li>
+    <li>The box opens with <b>Why go here</b>: the score, the temp compared with your species' sweet spot, whether it's on a temp break, a color edge, steep bottom or an eddy edge, the current, the depth, and the range and run time from your port.</li>
+    <li><b>What to do</b> gives a plan for that spot, like "troll along the break, warm side first".</li>
+    <li>Tap <span class="btnlbl">Save as spot</span>. It's saved with the reasons, so a week later you still know why you marked it.</li>
+  </ol>
+</section>
+
+<section class="tut" id="ana">
+  <h2>Ocean analysis</h2>
+  <p class="for">An automatic read of the water: breaks, color edges, current edges and eddy centers outlined and numbered, with a written run plan.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Analysis</span> and pick your species.</li>
+    <li>Read the write-up for <span class="btnlbl">Right now</span> or <span class="btnlbl">Tomorrow</span>.</li>
+    <li>Tap <span class="btnlbl">Copy write-up</span> to text it to your crew.</li>
+  </ol>
+</section>
+
+<section class="tut" id="find">
+  <h2>Find your water</h2>
+  <p class="for">You say what water you want. Breakline marks every patch inside your run that matches all of it.</p>
+  <ol>
+    <li>Tap <span class="btnlbl">Find water</span> on the left.</li>
+    <li>Set <b>From</b> (your port) and <b>Run up to</b> (how many miles you'll go).</li>
+    <li>Pick <span class="btnlbl">Hourly</span> or <span class="btnlbl">Blend</span> for the temps. Hourly is fresher but has cloud holes; Blend sees through clouds but is about a day old.</li>
+    <li>Tick the things that matter and set a range for each: depth, water temp, temp break (on, strong, or away from breaks), color, current speed (from satellite, HYCOM or RTOFS), mixed layer and salinity (a range or on an edge).</li>
+    <li>Or tap <span class="btnlbl">Use species</span> to fill in the temp and depth for your species, or <span class="btnlbl">Use my catches</span> to fill them in from the water you've caught fish in.</li>
+    <li>Tap <span class="btnlbl">Find water</span>. Matching water is shaded blue, with numbered blue circles on the biggest patches, biggest first.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> nothing matches? The message shows what share of the water each setting allows <b>on its own</b>. The one with the smallest share is doing the cutting, so widen it or turn it off.</p>
+</section>
+
+<section class="tut" id="alerts">
+  <h2>Water alerts</h2>
+  <p class="for">Save the water you caught fish in, and Breakline emails you when that water shows up within reach of your port again.</p>
+  <ol>
+    <li>Tap the spot you were fishing and choose <span class="btnlbl">Find this water again</span>. Find your water opens with that spot's temp, color, depth and break filled in. You can also start from any search you built yourself.</li>
+    <li>Tap <span class="btnlbl">🔔 Save as alert</span>, name it, and set the smallest patch worth hearing about (5 square miles to start).</li>
+    <li>Breakline re-checks it every time new charts arrive, up to every 10 minutes. When the water shows up, you get an email with how much there is, where, and a button that opens the chart right on it.</li>
+    <li>Your alerts are listed under <b>Your water alerts</b>, showing whether each is matching now. Use <span class="btnlbl">Show</span>, <span class="btnlbl">Pause</span> or <span class="btnlbl">Delete</span>.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> while the water stays, you get at most one email a day, so a big patch won't flood your inbox.</p>
+</section>
+
+<section class="tut" id="times">
+  <h2>Best times and tides</h2>
+  <p class="for">When to be there: solunar periods, sunrise and sunset, and the tide turns.</p>
+  <ol>
+    <li>Tap any spot and choose <span class="btnlbl">Best times here</span>, or look under <b>Best times</b> in the Where to fish panel.</li>
+    <li>Major and minor solunar periods are marked, and the windows where they line up with a tide change or sunrise and sunset get a ★.</li>
+    <li>Inshore picks list the tides at the nearest NOAA station and when to fish them.</li>
+  </ol>
+</section>
+
+<p class="group">On the boat</p>
+
+<section class="tut" id="trip">
+  <h2>Track my day</h2>
+  <p class="for">Record your run, then answer a few quick questions at the dock. Your catches teach Where to fish what water you actually catch fish in.</p>
+  <ol>
+    <li>Leaving the inlet, tap <span class="btnlbl">Trip</span> on the left, then <span class="btnlbl">Start tracking</span>. Your track draws on the chart.</li>
+    <li>Keep Breakline open and the phone plugged in. Phones pause web GPS when the screen locks, so leave <b>Keep the screen on while tracking</b> ticked.</li>
+    <li>Caught one? Tap <span class="btnlbl">Log a catch here</span> to drop it right where the boat is.</li>
+    <li>At the end of the day, tap <span class="btnlbl">Stop &amp; review my day</span>. Breakline finds every stop and hard turn and asks why (birds, weed line, a temp break, marking fish on the sounder…) and what you caught there.</li>
+    <li>Use <span class="btnlbl">Add a catch on the map</span> for anything you missed, then <span class="btnlbl">Save my day</span>.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> forgot to start tracking? You can still tap <span class="btnlbl">Add a catch on the map</span> and place catches by hand. They count just the same.</p>
+</section>
+
+<section class="tut" id="spots">
+  <h2>Spots and GPX</h2>
+  <p class="for">Save numbers, keep them on every device, and send them to your chartplotter.</p>
+  <ol>
+    <li>Tap the chart, type a name, and tap <span class="btnlbl">Save</span>. Saved spots show as markers with their names.</li>
+    <li>Tap <span class="btnlbl">Spots</span> on the left to see your list with lat/long, Loran TDs, water temp and depth when you saved it. Tap a name to fly there.</li>
+    <li>Tap <span class="btnlbl">Export GPX</span> to download every spot as a GPX file you can load into most chartplotters (Garmin, Simrad, Lowrance, Raymarine) or Navionics.</li>
+  </ol>
+</section>
+
+<section class="tut" id="loran">
+  <h2>Loran TDs</h2>
+  <p class="for">Still have numbers in an old logbook? Breakline reads and writes Loran TDs.</p>
+  <ol>
+    <li>Open <span class="btnlbl">Layers</span> and set <b>Grid</b> to Loran TDs or Both, then pick your TD pair.</li>
+    <li>Under <b>Go to Loran TDs</b>, enter both numbers and tap <span class="btnlbl">Go</span>.</li>
+    <li>If your plotter reads a known spot a little differently, open <b>Calibrate TDs</b> and enter the difference. Every spot after that is corrected.</li>
+  </ol>
+</section>
+
+<section class="tut" id="measure">
+  <h2>Measuring a run</h2>
+  <p class="for">Distance, bearing and run time for a trip with several legs.</p>
+  <ol>
+    <li>Tap the ruler button at the top right of the chart.</li>
+    <li>Tap the chart to drop points. Each leg shows its distance and bearing, and the bar shows the total and about how long it takes at 25 knots.</li>
+    <li><span class="btnlbl">Undo</span> removes the last point; <span class="btnlbl">Done</span> finishes.</li>
+  </ol>
+</section>
+
+<section class="tut" id="offshore">
+  <h2>Offshore, no signal</h2>
+  <p class="for">Take the charts with you when the phone loses service past the sea buoy.</p>
+  <ol>
+    <li>At the dock, on Wi-Fi or good signal, tap <span class="btnlbl">Spots</span>, then <span class="btnlbl">Download for offshore</span>.</li>
+    <li>Breakline saves the last 48 hours of every chart for your home port's area: temp, hourly scans, color, altimetry, currents, salinity and mixed layer.</li>
+    <li>Offshore, open Breakline as usual. The saved charts load, and Find your water works too.</li>
+  </ol>
+  <p class="tip"><b>Tip:</b> weather, tides and HF radar need a signal. Check them before you leave.</p>
+</section>
+
+<section class="tut" id="backup">
+  <h2>When NOAA is down</h2>
+  <p class="for">There's nothing to do: Breakline keeps its own copy of every chart.</p>
+  <ol>
+    <li>Breakline checks NOAA for new charts every 10 minutes and saves a copy.</li>
+    <li>If NOAA's servers stop answering, the app switches to the saved copy on its own, and the color bar says <b>saved copy</b>.</li>
+  </ol>
+</section>
+
+<section class="final" style="padding-left:0;padding-right:0;text-align:left;background:none">
+  <h2>Ready to try it on your water?</h2>
+  <a class="btn big" href="/app?signup">Start your 5-day free trial</a>
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="brand"><img src="icon.svg" alt="" width="22" height="22"><span>Breakline</span></div>
+  <p>Satellite data from NOAA, NASA and Copernicus Marine. Not for navigation.</p>
+  <p>&copy; 2026 Breakline</p>
+</footer>
+
+</body>
+</html>

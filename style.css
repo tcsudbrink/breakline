@@ -405,3 +405,12 @@ body.gated #rail, body.gated #topLeft, body.gated #datebar { visibility: hidden;
 .layer-info ul { margin: 0; padding-left: 17px; }
 .layer-info li { margin: 3px 0; }
 @media (max-width: 700px) { .layer-info { left: 8px; right: 8px; width: auto; bottom: 110px; max-height: 55vh; } }
+
+/* Why go here (numbered picks) */
+.pp-why { margin: 2px 0 8px; padding: 7px 9px; background: rgba(251,227,106,.08); border-left: 3px solid #fbe36a; border-radius: 4px; font-size: 12px; line-height: 1.4; max-width: 300px; }
+.pp-why ul { margin: 4px 0 5px; padding-left: 16px; }
+.pp-why li { margin: 2px 0; }
+#wList li i { color: var(--muted); font-style: normal; font-size: 11px; }
+
+.layer-info .li-more { margin: 10px 0 0; font-size: 12px; }
+.layer-info .li-more a, #layers .hint a { color: var(--accent); }

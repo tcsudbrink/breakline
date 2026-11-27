@@ -152,7 +152,7 @@ def page(slug, p):
 if __name__ == '__main__':
     for slug, p in PAGES.items():
         open(os.path.join(ROOT, f'{slug}.html'), 'w', encoding='utf-8').write(page(slug, p))
-    urls = [''] + list(PAGES)
+    urls = [''] + list(PAGES) + ['guide']
     open(os.path.join(ROOT, 'sitemap.xml'), 'w', encoding='utf-8').write(
         '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         + ''.join(f'  <url><loc>{SITE}/{u}</loc></url>\n' for u in urls) + '</urlset>\n')
