@@ -1359,9 +1359,67 @@ async function loadCmems(s, win, day, target = 360) {
 }
 
 // NOAA (or Copernicus) not answering: fall back to Breakline's own copy, refreshed every 10 minutes
+// ---------- Sharp store: every full-resolution chart you load is kept on this device (IndexedDB) ----------
+// Next time the view is inside one, it draws from here instantly. A copy under an hour old (or any past date)
+// is used as-is with no NOAA call; an older "latest" copy is shown at once while NOAA is checked for newer data.
+const SHARP_MB = 80, SHARP_FRESH = 60 * 60 * 1000;
+let SHARP_DB = null, SHARP_META = [];
+const sharpOpen = () => SHARP_DB || (SHARP_DB = new Promise((ok, no) => {
+  if (!('indexedDB' in window)) { no(new Error('no IndexedDB')); return; }
+  const r = indexedDB.open('breakline-sharp', 1);
+  r.onupgradeneeded = () => { r.result.createObjectStore('meta', { keyPath: 'id' }); r.result.createObjectStore('grid'); };
+  r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+}));
+const idbReq = (q) => new Promise((ok, no) => { q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error); });
+const sharpReady = sharpOpen().then((db) => idbReq(db.transaction('meta').objectStore('meta').getAll())).then((m) => { SHARP_META = m; }).catch(() => {});
+function sharpKey(prod) {
+  if (prod === 'depth') return 'depth';
+  const p = PRODUCTS[prod];
+  if (!p || p.hourly || prod === 'goes' || (p.family && curSrc(p.family).comp)) return null;   // hourly + composites are built from Breakline's own copy already
+  return `${prod}|${p.family ? S.src[p.family] : ''}|${p.zlev ? S.zlev || 0 : 0}|${S.date || 'latest'}`;
+}
+async function sharpGet(prod) {
+  const k = sharpKey(prod); if (!k) return null;
+  await sharpReady;
+  const p = prod === 'depth' ? { res: 1 / 240, cells: 620 } : PRODUCTS[prod];
+  const hits = SHARP_META.filter((m) => m.k === k && covers({ win: m.win }, p.res, p.cells));
+  if (!hits.length) return null;
+  hits.sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.win.stride - b.win.stride || b.savedAt - a.savedAt);
+  const m = hits[0];
+  try {
+    const g = await idbReq((await sharpOpen()).transaction('grid').objectStore('grid').get(m.id)); if (!g) return null;
+    const old = S.date && S.date < addDays(isoDate(new Date()), -3);
+    return { g: { ...g, sharp: true, savedAt: m.savedAt }, final: prod === 'depth' || !!old || Date.now() - m.savedAt < SHARP_FRESH };
+  } catch (e) { return null; }
+}
+async function sharpPut(prod, g) {
+  const k = sharpKey(prod); if (!k || !g?.win || g.pre || g.backup || g.sharp || g.win.static) return;
+  try {
+    const db = await sharpOpen(), id = `${k}|${g.win.s},${g.win.n},${g.win.w},${g.win.e},${g.win.stride}`;
+    const rec = {}; for (const [a, v] of Object.entries(g)) if (typeof v !== 'function') rec[a] = v;
+    const meta = { id, k, win: g.win, date: g.date || '', savedAt: Date.now(), bytes: (g.v?.length || 0) * 4 };
+    // drop copies this one replaces: same layer, inside this window, same day or older
+    const gone = SHARP_META.filter((m) => m.id !== id && m.k === k && m.date <= meta.date && m.win.s >= g.win.s && m.win.n <= g.win.n && m.win.w >= g.win.w && m.win.e <= g.win.e && m.win.stride >= g.win.stride);
+    SHARP_META = SHARP_META.filter((m) => m.id !== id && !gone.includes(m)); SHARP_META.push(meta);
+    // keep the whole store under SHARP_MB: oldest out first
+    let total = SHARP_META.reduce((t, m) => t + m.bytes, 0);
+    const byAge = [...SHARP_META].sort((a, b) => a.savedAt - b.savedAt);
+    while (total > SHARP_MB * 1e6 && byAge.length > 1) { const m = byAge.shift(); gone.push(m); total -= m.bytes; SHARP_META = SHARP_META.filter((x) => x !== m); }
+    const tx = db.transaction(['meta', 'grid'], 'readwrite');
+    for (const m of gone) { tx.objectStore('meta').delete(m.id); tx.objectStore('grid').delete(m.id); }
+    tx.objectStore('meta').put(meta); tx.objectStore('grid').put(rec, id);
+  } catch (e) { console.warn('sharp store', e); }
+}
 async function loadGrid(prod) {
-  try { return await loadGridLive(prod); }
+  const hit = await sharpGet(prod);
+  if (hit?.final) return hit.g;                         // sharp copy on this device, still current: no NOAA call
+  try {
+    const g = await loadGridLive(prod);
+    if (hit && g.pre && (hit.g.date || '') >= (g.date || '')) return hit.g;   // never trade a sharp copy for a coarser one of the same day
+    sharpPut(prod, g); return g;
+  }
   catch (e) {
+    if (hit) { console.warn(`${prod}: live source failed (${e.message}); using the sharp copy saved on this device`); return { ...hit.g, backup: true }; }
     let g = null;
     try { g = await preForView(prod, true); } catch (e2) { console.warn('saved copy', e2); }
     if (!g) throw e;
@@ -1523,8 +1581,12 @@ async function loadBathy() {
   let g = null;
   if (map.getZoom() < 9) { await bathy2Ready; g = bathyFromStatic(win); }
   if (!g) {
-    const url = `/erddap/pfeg/griddap/ETOPO_2022_v1_15s.asc?${q(`z[${latRange(win, true)}][${lonRange(win)}]`)}`;
-    g = toGrid(parseAsc(await getText(url)), 'z'); g.win = win;
+    const hit = await sharpGet('depth');
+    if (hit) g = hit.g;
+    else {
+      const url = `/erddap/pfeg/griddap/ETOPO_2022_v1_15s.asc?${q(`z[${latRange(win, true)}][${lonRange(win)}]`)}`;
+      g = toGrid(parseAsc(await getText(url)), 'z'); g.win = win; sharpPut('depth', g);
+    }
   }
   const vals = Float64Array.from(g.v, (x) => (x !== x ? 0 : x));
   S.geo.land = contourRings(g, vals, [0])[0].rings;
@@ -2558,10 +2620,11 @@ async function refresh() {
     if (!p.computed && !fresh(S.prod)) {
       let live = false;
       const quick = map.getZoom() > 8 && !(p.zlev && S.zlev) && S.prod !== 'goes' && !(p.family && curSrc(p.family).comp);
-      if (quick) preForView(S.prod, true).then((g) => {
+      // the sharp copy on this device if there is one, else Breakline's coarser 10-minute copy
+      (async () => { const h = await sharpGet(S.prod); return h ? h.g : quick ? preForView(S.prod, true) : null; })().then((g) => {
         if (!g || live || my !== loading) return;
         S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial();
-        status('Showing the saved chart; the sharper live one is on its way…');
+        status(g.sharp ? `Showing your saved chart from ${new Date(g.savedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}; checking NOAA for newer data…` : 'Showing the saved chart; the sharper live one is on its way…');
       }).catch(() => {});
       add(p.name.toLowerCase(), loadGrid(S.prod).then((g) => { live = true; S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
     }
