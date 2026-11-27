@@ -19,6 +19,10 @@
   ],
   "rewrites": [
     {
+      "source": "/echo-test/:path*",
+      "destination": "/api/echo"
+    },
+    {
       "source": "/app",
       "destination": "/app.html"
     },
