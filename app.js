@@ -2625,7 +2625,7 @@ async function applyForecast() {
 
 let loading = 0;
 async function refresh() {
-  const my = ++loading, p = PRODUCTS[S.prod];
+  const my = ++loading, prod0 = S.prod, p = PRODUCTS[prod0];
   status(`Loading ${p.name.toLowerCase()}…`);
   try {
     const jobs = [];
@@ -2640,10 +2640,10 @@ async function refresh() {
       // the sharp copy on this device if there is one, else Breakline's coarser 10-minute copy
       (async () => { const h = await sharpGet(S.prod); return h ? h.g : quick ? preForView(S.prod, true) : null; })().then((g) => {
         if (!g || live || my !== loading) return;
-        S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial();
+        S.data[prod0] = g; if (p.sst) buildSstGeo(g); partial();
         status(g.sharp ? `Showing your saved chart from ${new Date(g.savedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}; checking NOAA for newer data…` : 'Showing the saved chart; the sharper live one is on its way…');
       }).catch(() => {});
-      add(p.name.toLowerCase(), loadGrid(S.prod).then((g) => { live = true; S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
+      add(p.name.toLowerCase(), loadGrid(prod0).then((g) => { live = true; if (S.prod !== prod0) return; S.data[prod0] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
     }
     else if (p.sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
     if (S.prod === 'ftle') add('currents', loadCurrents(6).then((c) => { S.data.cur6 = c; S.data.ftle = computeFtle(c); }));
