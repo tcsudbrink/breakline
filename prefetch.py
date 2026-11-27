@@ -319,7 +319,7 @@ def main():
                 return f"{zone}/{key}/{when}", e, round(time.time() - t0, 1)
             except Exception as ex:  # noqa: BLE001
                 err = str(ex)[:90]
-                if "502" in err or "503" in err or "timed out" in err:
+                if any(x in err for x in ("502", "503", "504", "timed out", "urlopen error", "Connection", "10060", "refused", "reset")):
                     fails[host] += 1
                     if fails[host] >= 4:
                         break
@@ -331,6 +331,9 @@ def main():
         jobs = [j for j in jobs if any(j[1].startswith(o) for o in only.split(","))]
     print(f"{len(jobs)} charts to fetch", flush=True)
     changed = False
+    # Hourly GOES first, on its own clock: it comes from NOAA's AWS bucket, which stays up when ERDDAP doesn't
+    if not only or "goes" in only:
+        changed |= run_goes(items, now, time.time() + 200)
     deadline = time.time() + float(os.environ.get("PREFETCH_BUDGET_S", "2400"))
     # NOAA asks for gentle clients: 4 at a time, and stop at the time budget (the rest waits for next hour)
     with cf.ThreadPoolExecutor(4) as ex:
@@ -352,9 +355,7 @@ def main():
                     g.cancel()
                 break
 
-    # Hourly GOES-19 water temp from the satellite's own files (NOAA dropped it from ERDDAP in Nov 2026)
-    if not only or "goes" in only:
-        changed |= run_goes(items, now, deadline + 120)
+    # (hourly GOES ran first, above)
     # Ocean-model currents (HYCOM, RTOFS): every few hours, straight from the modelling centres
     if not only or "model" in only:
         changed |= run_models(items, deadline + 180)
