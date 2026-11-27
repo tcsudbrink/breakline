@@ -349,7 +349,12 @@ async function fetchOnce(url, ms) {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try { return await fetch(url, { signal: ac.signal }); } finally { clearTimeout(timer); }
 }
-async function getText(url) {
+const INFLIGHT = new Map();
+function getText(url) {
+  if (!INFLIGHT.has(url)) INFLIGHT.set(url, getTextNet(url).finally(() => INFLIGHT.delete(url)));
+  return INFLIGHT.get(url);
+}
+async function getTextNet(url) {
   const m = url.match(/^\/erddap\/(\w+)\/griddap\/(\w+)(\..*)$/);
   const cands = [url];
   if (m && MIRRORS[`${m[1]}/${m[2]}`]) cands.unshift(...MIRRORS[`${m[1]}/${m[2]}`].map((x) => `/erddap/${x.split('/')[0]}/griddap/${x.split('/')[1]}${m[3]}`));
@@ -2550,7 +2555,16 @@ async function refresh() {
     const partial = () => { if (my !== loading) return; autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate(); };
     if (!covers(S.data.bathy, 1 / 240, 620)) add('depth chart', loadBathy().then(() => { if (my === loading) { renderRelief(); chart.draw(); } }));
     const fresh = (k) => { const pp = PRODUCTS[k]; return covers(S.data[k], pp.res, pp.cells) && (!pp.family || S.data[k].src === S.src[pp.family]); };
-    if (!p.computed && !fresh(S.prod)) add(p.name.toLowerCase(), loadGrid(S.prod).then((g) => { S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
+    if (!p.computed && !fresh(S.prod)) {
+      let live = false;
+      const quick = map.getZoom() > 8 && !(p.zlev && S.zlev) && S.prod !== 'goes' && !(p.family && curSrc(p.family).comp);
+      if (quick) preForView(S.prod, true).then((g) => {
+        if (!g || live || my !== loading) return;
+        S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial();
+        status('Showing the saved chart; the sharper live one is on its way…');
+      }).catch(() => {});
+      add(p.name.toLowerCase(), loadGrid(S.prod).then((g) => { live = true; S.data[S.prod] = g; if (p.sst) buildSstGeo(g); partial(); status('Loading overlays…'); }));
+    }
     else if (p.sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
     if (S.prod === 'ftle') add('currents', loadCurrents(6).then((c) => { S.data.cur6 = c; S.data.ftle = computeFtle(c); }));
     const fishy = S.prod === 'fish' || S.prod === 'ana';
@@ -3121,7 +3135,7 @@ map.on('moveend', () => {
     const before = JSON.stringify(S.range[S.prod]); autoRange();
     if (JSON.stringify(S.range[S.prod]) !== before) renderRaster();
     drawLegend(); chart.draw();
-  }, 450);
+  }, 250);
 });
 
 // ---------- What each reading means (the (i) notes in the tap box) ----------
