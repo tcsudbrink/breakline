@@ -22,9 +22,9 @@
     <p id="gSub" class="gate-sub"></p>
     <form id="gForm" novalidate>
       <input id="gName" type="text" autocomplete="name" placeholder="Your name" hidden>
-      <input id="gEmail" type="email autocomplete="email" inputmode="email" placeholder="Email" required>
+      <input id="gEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email" required>
       <input id="gPass" type="password" autocomplete="current-password" placeholder="Password">
-      <input id="gPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="Phone (optional)" hidden>
+      <input id="gPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="Phone" hidden>
       <button id="gGo" type="submit">Sign in</button>
     </form>
     <p id="gMsg"></p>
@@ -55,6 +55,7 @@
   <div class="sep"></div>
   <button id="btnLayers" class="tool"><span class="ico">&#9776;</span><span>Layers</span></button>
   <button id="btnWpts" class="tool"><span class="ico">&#9670;</span><span>Spots</span></button>
+  <button id="btnFind" class="tool"><span class="ico">&#9678;</span><span>Find water</span></button>
 </nav>
 
 <!-- Date strip -->
@@ -148,6 +149,36 @@
   <ol id="spotList"></ol>
   <h3 id="fishTimesHdr">Best times</h3>
   <div id="fishTimes"></div>
+</section>
+
+<!-- Find your water: every patch inside your run that matches what you set -->
+<section id="fwPanel" class="panel side" hidden>
+  <h3>Find your water <button id="fwClose" class="x" aria-label="Close" title="Close (matches stay on the chart until you clear them)">&times;</button></h3>
+  <p class="hint long">Turn on what matters and set the range. Breakline marks every patch of water inside your run that matches all of it.</p>
+  <div class="row2"><span class="lbl">From</span><select id="fwPort" aria-label="Home port"></select></div>
+  <div class="row2"><span class="lbl">Run up to</span><input id="fwRun" type="number" min="5" max="400" step="5" aria-label="Distance willing to run"><span class="lbl">nm</span></div>
+  <div class="row2"><span class="lbl">Temp from</span><span class="seg row2" id="fwTempSrc" style="flex:1;margin:0"><button data-v="hourly">Hourly</button><button data-v="blend">Blend</button></span></div>
+  <p class="hint">Hourly: newest clear GOES-19 look in the last 24 h (clouds leave holes). Blend: the daily cloud-free map, smoother and about a day old. Used for water temp and temp breaks.</p>
+  <div class="fwc" data-k="depth"><label><input type="checkbox" class="on"> Depth</label>
+    <div class="row2"><input class="lo" type="number" min="0" step="10" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="10" placeholder="max"><span class="lbl">fm</span></div></div>
+  <div class="fwc" data-k="temp"><label><input type="checkbox" class="on"> Water temp</label>
+    <div class="row2"><input class="lo" type="number" step="0.5" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" step="0.5" placeholder="max"><span class="lbl">&deg;F</span></div>
+</div>
+  <div class="fwc" data-k="front"><label><input type="checkbox" class="on"> Temp break (front)</label>
+    <div class="row2"><select class="mode"><option value="on">On a break</option><option value="strong">On a strong break</option><option value="off">Away from breaks</option></select></div></div>
+  <div class="fwc" data-k="chl"><label><input type="checkbox" class="on"> Chlorophyll (color)</label>
+    <div class="row2"><input class="lo" type="number" min="0" step="0.01" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="0.01" placeholder="max"><span class="lbl">mg/m&sup3;</span></div></div>
+  <div class="fwc" data-k="cur"><label><input type="checkbox" class="on"> Current</label>
+    <div class="row2"><input class="lo" type="number" min="0" step="0.1" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="0.1" placeholder="max"><span class="lbl">kt</span></div></div>
+  <div class="fwc" data-k="mld"><label><input type="checkbox" class="on"> Mixed layer depth</label>
+    <div class="row2"><input class="lo" type="number" min="0" step="10" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" min="0" step="10" placeholder="max"><span class="lbl">ft</span></div>
+    <p class="hint fwnote">Shallow mixed layer = warm water and bait squeezed near the surface. Not available off Pacific Costa Rica or Cabo.</p></div>
+  <div class="fwc" data-k="sal"><label><input type="checkbox" class="on"> Salinity</label>
+    <div class="row2"><select class="mode"><option value="range">In a range</option><option value="edge">On a salinity edge</option></select></div>
+    <div class="row2 salr"><input class="lo" type="number" step="0.1" placeholder="min"><span class="lbl">to</span><input class="hi" type="number" step="0.1" placeholder="max"><span class="lbl">PSU</span></div></div>
+  <div class="row"><button id="fwGo">Find water</button><button id="fwFill" class="ghost" title="Set temp and depth from the species picked in Where to fish">Use species</button><button id="fwClear" class="ghost">Clear</button></div>
+  <p id="fwMsg" class="hint"></p>
+  <ol id="fwList"></ol>
 </section>
 
 <!-- Ocean analysis write-up -->

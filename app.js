@@ -12,13 +12,22 @@ const WORLD = { s: -5, n: 50, w: -120, e: -50 };   // Gulf of Maine to the Carib
 // Fishing zones: quick-jump views, a default home port, and the boxes the hourly prefetch covers (keep in sync with prefetch.py)
 const ZONES = {
   ne: { label: 'Northeast canyons', view: [[39.0, -74.5], [41.6, -68.5]], home: 'Montauk', box: 'east' },
+  ng: { label: 'New England: Cape Cod, Nantucket, the Vineyard', view: [[40.2, -71.8], [42.4, -68.6]], home: 'Nantucket', box: 'east' },
   ma: { label: 'Mid-Atlantic', view: [[35.6, -76.4], [39.6, -71.8]], home: 'Ocean City Inlet', box: 'east' },
   se: { label: 'Carolinas & Georgia', view: [[31.0, -81.5], [36.0, -74.5]], home: 'Oregon Inlet', box: 'east' },
   fl: { label: 'Florida & Bahamas', view: [[23.6, -83.2], [27.6, -76.0]], home: 'Palm Beach Inlet', box: 'fl' },
+  flg: { label: 'Florida Gulf: Clearwater to Naples', view: [[24.8, -85.0], [28.4, -81.6]], home: 'Clearwater Pass', box: 'fl' },
+  gulf: { label: 'Northern Gulf: Venice, Orange Beach, Destin', view: [[27.0, -91.0], [30.6, -85.2]], home: 'Orange Beach (Perdido Pass)', box: 'east' },
+  tx: { label: 'Texas: Galveston to South Padre', view: [[25.8, -97.6], [29.6, -93.2]], home: 'Port Aransas', box: 'east' },
+  bda: { label: 'Bermuda', view: [[31.4, -65.6], [33.2, -63.8]], home: "St. George's", box: 'east' },
+  tci: { label: 'Turks & Caicos', view: [[20.9, -72.9], [22.3, -71.0]], home: 'Providenciales', box: 'fl' },
+  pr: { label: 'Puerto Rico & Virgin Islands', view: [[17.4, -67.6], [19.2, -64.2]], home: 'Fajardo', box: 'pr' },
   cr: { label: 'Costa Rica (Pacific)', view: [[7.6, -87.6], [11.2, -83.4]], home: 'Los Sueños', box: 'cr' },
   crs: { label: 'Costa Rica offshore / Cocos', view: [[3.0, -90.5], [10.5, -82.5]], home: 'Quepos (Pez Vela)', box: 'cr' },
   cabo: { label: 'Cabo San Lucas & Mag Bay', view: [[22.3, -113.2], [25.4, -108.9]], home: 'Cabo San Lucas', box: 'cabo' },
   chiapas: { label: 'Chiapas (Puerto Chiapas)', view: [[13.0, -95.0], [15.8, -91.6]], home: 'Puerto Chiapas', box: 'chiapas' },
+  guat: { label: 'Guatemala (Puerto San José)', view: [[12.6, -92.4], [14.4, -89.8]], home: 'Puerto San José (Iztapa)', box: 'chiapas' },
+  pan: { label: 'Panama (Piñas Bay, Pedasí)', view: [[6.4, -80.9], [8.8, -77.8]], home: 'Piñas Bay', box: 'cr' },
   cancun: { label: 'Cancún, Isla Mujeres, Cozumel', view: [[19.9, -87.6], [22.3, -85.4]], home: 'Isla Mujeres', box: 'cancun' },
   puntacana: { label: 'Punta Cana / Cap Cana (DR)', view: [[17.5, -69.8], [19.4, -67.4]], home: 'Cap Cana', box: 'puntacana' },
   stlucia: { label: 'St. Lucia', view: [[13.3, -61.6], [14.5, -60.4]], home: 'Rodney Bay', box: 'stlucia' },
@@ -27,6 +36,7 @@ const PRE_BOX = {
   east: { s: 23.0, n: 46.0, w: -98.0, e: -60.0 }, fl: { s: 20.0, n: 28.5, w: -85.0, e: -72.0 }, cr: { s: -1.0, n: 13.0, w: -96.0, e: -78.0 },
   cabo: { s: 21.0, n: 27.5, w: -117.0, e: -106.5 }, chiapas: { s: 11.5, n: 17.5, w: -98.0, e: -90.0 }, cancun: { s: 18.5, n: 23.5, w: -89.0, e: -84.0 },
   puntacana: { s: 16.5, n: 21.0, w: -71.5, e: -66.0 }, stlucia: { s: 11.5, n: 16.0, w: -63.0, e: -59.0 },
+  pr: { s: 16.5, n: 20.0, w: -68.5, e: -63.5 },
 };
 const FATHOM = 1.8288;
 const DEPTHS_MAJOR = [50, 100, 500, 1000];
@@ -37,7 +47,8 @@ const depthTxt = (m) => { const fm = -m / FATHOM; return fm < 10 ? `${Math.round
 
 // Inlet positions are approximate (within ~0.5 nm), for range/bearing only.
 const PORTS = [
-  ['Montauk', 41.073, -71.936], ['Shinnecock Inlet', 40.840, -72.477], ['Manasquan Inlet', 40.103, -74.030],
+  ['Gloucester', 42.580, -70.660], ['Chatham', 41.672, -69.940], ['Nantucket', 41.300, -70.095], ["Edgartown (Martha's Vineyard)", 41.390, -70.505],
+  ['Point Judith', 41.360, -71.485], ['Montauk', 41.073, -71.936], ['Shinnecock Inlet', 40.840, -72.477], ['Manasquan Inlet', 40.103, -74.030],
   ['Barnegat Inlet', 39.760, -74.095], ['Absecon Inlet', 39.373, -74.410], ['Cape May Inlet', 38.947, -74.868],
   ['Indian River Inlet', 38.610, -75.065], ['Ocean City Inlet', 38.324, -75.085], ['Chincoteague Inlet', 37.860, -75.400],
   ['Wachapreague Inlet', 37.585, -75.600], ['Lynnhaven Inlet', 36.912, -76.090], ['Rudee Inlet', 36.830, -75.965],
@@ -46,12 +57,18 @@ const PORTS = [
   ['Fort Pierce Inlet', 27.471, -80.290], ['Jupiter Inlet', 26.944, -80.070], ['Palm Beach Inlet', 26.772, -80.037],
   ['Boca Raton Inlet', 26.336, -80.070], ['Port Everglades', 26.092, -80.110], ['Miami (Government Cut)', 25.763, -80.130],
   ['Islamorada (Whale Harbor)', 24.940, -80.610], ['Marathon', 24.700, -81.100], ['Key West', 24.552, -81.800],
+  ['Naples (Gordon Pass)', 26.093, -81.805], ['Boca Grande Pass', 26.710, -82.255], ["John's Pass", 27.780, -82.785], ['Clearwater Pass', 27.965, -82.830],
+  ['Venice, LA', 29.270, -89.355], ['Pensacola Pass', 30.320, -87.310], ['Orange Beach (Perdido Pass)', 30.272, -87.555], ['Destin (East Pass)', 30.390, -86.513], ['Panama City (St. Andrew Pass)', 30.120, -85.730],
+  ['Galveston', 29.340, -94.700], ['Freeport', 28.935, -95.300], ["Port O'Connor", 28.400, -96.390], ['Port Aransas', 27.835, -97.045], ['South Padre Island', 26.070, -97.155],
+  ["St. George's", 32.380, -64.670], ['Providenciales', 21.790, -72.280],
+  ['San Juan', 18.465, -66.115], ['Fajardo', 18.330, -65.630], ['Red Hook (St. Thomas)', 18.320, -64.845], ['Road Town (Tortola)', 18.420, -64.610],
   ['Bimini', 25.730, -79.300], ['Chub Cay', 25.410, -77.900], ['Nassau', 25.080, -77.350], ['Marsh Harbour', 26.545, -77.060],
   ['Marina Papagayo', 10.640, -85.660], ['Flamingo', 10.430, -85.790], ['Los Sueños', 9.645, -84.670],
   ['Quepos (Pez Vela)', 9.420, -84.170], ['Golfito', 8.620, -83.180],
   ['Cabo San Lucas', 22.880, -109.910], ['San José del Cabo', 23.050, -109.680], ['Buena Vista (East Cape)', 23.650, -109.640],
   ['Puerto San Carlos (Mag Bay)', 24.790, -112.110], ['Puerto Magdalena', 24.630, -112.150],
-  ['Puerto Chiapas', 14.700, -92.400],
+  ['Puerto Chiapas', 14.700, -92.400], ['Puerto San José (Iztapa)', 13.920, -90.790],
+  ['Piñas Bay', 7.570, -78.190], ['Pedasí', 7.530, -80.020],
   ['Isla Mujeres', 21.250, -86.740], ['Cancún (Puerto Juárez)', 21.180, -86.800], ['Cozumel', 20.510, -86.950], ['Puerto Aventuras', 20.500, -87.230],
   ['Cap Cana', 18.430, -68.400], ['Punta Cana (Marina)', 18.500, -68.370],
   ['Rodney Bay', 14.080, -60.950], ['Marigot Bay', 13.970, -61.030], ['Vieux Fort', 13.730, -60.950],
@@ -178,7 +195,7 @@ const store = {
   set: (k, v) => { localStorage.setItem('breakline.' + k, JSON.stringify(v)); if (SYNC_KEYS.includes(k)) ACCT_HOOK.settings?.(); },
 };
 // Settings saved to the signed-in account (everything else stays on this device)
-const SYNC_KEYS = ['home', 'grid', 'tdPair', 'tdOff', 'species', 'maxRun', 'fishDepth'];
+const SYNC_KEYS = ['home', 'grid', 'tdPair', 'tdOff', 'species', 'maxRun', 'fishDepth', 'fw'];
 const ACCT_HOOK = {};
 const S = {
   prod: store.get('prod', 'sst'),
@@ -785,6 +802,7 @@ function drawChart(ctx, size) {
   if (S.ov.wrecks) drawWrecks(ctx, size, z);
   if (S.prod === 'ana') drawAnalysis(ctx, size, boxes);
   if (S.prod === 'fish' || S.prod === 'ana') drawHotspots(ctx);
+  if (S.fwHits) drawFindWater(ctx);
   if (S.prod === 'wx') drawWx(ctx);
 
   if (S.ov.ports) {
@@ -1169,7 +1187,8 @@ function drawLegend() {
   else if (g?.date) when = g.baseDate ? `${nice(g.date)} · gaps from ${nice(g.baseDate).replace(/^\w+, /, '')}` : nice(g.date);
   if (S.fc > 0) when = `${niceHour(fcTime(S.fc))} (+${S.fc} h forecast)`;
   const via = g?.via && !p.family ? ' · Copernicus' : (!g?.via && ['ssh', 'mld', 'sss'].includes(S.prod) ? ' · NOAA' : '');
-  $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}</span>`;
+  const bk = g?.backup ? ' · <b title="NOAA is not answering right now, so this is the Breakline saved copy (checked every 10 minutes)">saved copy</b>' : '';
+  $('lgTitle').innerHTML = `<span>${p.name}${p.unit ? ` (${p.unit})` : ''}</span><span>${when}${via}${bk}</span>`;
   $('legend').classList.toggle('fixed', !!p.noLegendRange);
   if (!rng || !S.domain) { $('lgBar').style.background = `linear-gradient(90deg, ${p.stops.join(',')})`; return; }
   const a = domT(rng[0]) * 100, b = domT(rng[1]) * 100, n = p.stops.length - 1;
@@ -1318,7 +1337,18 @@ async function loadCmems(s, win, day, target = 360) {
   return { nx: W, ny, lat0: latBot + dlat / 2, dlat, lon0: lonW + pxDeg / 2, dlon: pxDeg, v, times: [day.includes('T') ? day : `${day}T00:00:00Z`], date: day.slice(0, 10), src: 'cmems' };
 }
 
+// NOAA (or Copernicus) not answering: fall back to Breakline's own copy, refreshed every 10 minutes
 async function loadGrid(prod) {
+  try { return await loadGridLive(prod); }
+  catch (e) {
+    let g = null;
+    try { g = await preForView(prod, true); } catch (e2) { console.warn('saved copy', e2); }
+    if (!g) throw e;
+    console.warn(`${prod}: live source failed (${e.message}); using the saved copy`);
+    g.backup = true; return g;
+  }
+}
+async function loadGridLive(prod) {
   const p = PRODUCTS[prod], win = windowFor(p.res, p.cells);
   let text;
   // zoomed out over a prefetched zone: the hourly snapshot on our own CDN (about a second)
@@ -1503,7 +1533,16 @@ async function loadCurrents(days = 1, latest = false) {
     const us = pairs.map((pp) => pp[0].v.map(ok)), vs = pairs.map((pp) => pp[1].v.map(ok)), g = pairs[pairs.length - 1][0];
     return { ...g, win: { ...win, stride: 1 }, u: us[us.length - 1], vv: vs[vs.length - 1], us, vs, date: end, via: 'Copernicus' };
   } catch (e) { console.warn('Copernicus currents failed, trying NOAA', e); }
-  return loadCurrentsNoaa(days, latest);
+  try { return await loadCurrentsNoaa(days, latest); }
+  catch (e) { const c = await preCurrents().catch(() => null); if (c) return c; throw e; }
+}
+// Satellite currents from Breakline's saved copy (one day, ~15 nm): used when both live sources are down, and by Find your water
+async function preCurrents(zone = preZoneAt(map.getCenter())) {
+  await preReady; if (!PRE || !zone) return null;
+  const eu = preEntry(`${zone}/cur/u/latest`), ev = preEntry(`${zone}/cur/v/latest`);
+  if (!eu?.file || !ev?.file) return null;
+  const ok = (x) => (Math.abs(x) < 2.4 ? x : NaN), [gu, gv] = await Promise.all([preGrid(eu, ok), preGrid(ev, ok)]);
+  return { ...gu, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, u: gu.v, vv: gv.v, us: [gu.v], vs: [gv.v], backup: true };
 }
 async function loadCurrentsNoaa(days = 1, latest = false) {
   const win = windowFor(0.25, 999), day = latest ? null : S.date, t = day ? `${day}T12:00:00Z` : null;
@@ -2636,6 +2675,12 @@ function preZone(v) {
   return null;
 }
 function preEntry(id) { return PRE?.items?.[id] || null; }
+// smallest saved-copy box holding a point
+function preZoneAt(ll) {
+  const boxes = Object.entries(PRE?.zones || PRE_BOX).filter(([, b]) => ll.lat >= b.s && ll.lat <= b.n && ll.lng >= b.w && ll.lng <= b.e);
+  boxes.sort((a, c) => (a[1].n - a[1].s) * (a[1].e - a[1].w) - (c[1].n - c[1].s) * (c[1].e - c[1].w));
+  return boxes[0]?.[0] || null;
+}
 // newest prefetched day for a source in a zone
 function preLatest(zone, fam, key) {
   const pre = `${zone}/${fam}/${key}/`, days = Object.keys(PRE?.items || {}).filter((k) => k.startsWith(pre) && !PRE.items[k].none).sort();
@@ -2659,11 +2704,18 @@ async function preGrid(entry, conv) {
   return g;
 }
 // For the main chart: use the prefetched grid when zoomed out over a prefetched zone
-async function preForView(prod) {
-  if (map.getZoom() > 8) return null;
+// force = the live source failed: use the saved copy at any zoom, for the zone under the middle of the screen
+const PRE_LATEST = { ssh: 'ssh/blend', mld: 'mld/ohc', sss: 'sss/smap' };
+async function preForView(prod, force) {
+  if (!force && map.getZoom() > 8) return null;
   await preReady; if (!PRE) return null;
-  const b = map.getBounds(), zone = preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
+  const b = map.getBounds(), zone = force ? preZoneAt(map.getCenter()) : preZone({ s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }); if (!zone) return null;
   const p = PRODUCTS[prod];
+  if (PRE_LATEST[prod]) {
+    if (!force) return null;                     // live is sharper (Copernicus 8-14 km); the saved copy is the backup
+    const e = preEntry(`${zone}/${PRE_LATEST[prod]}/latest`); if (!e?.file || (S.date && e.time.slice(0, 10) !== S.date)) return null;
+    return { ...(await preGrid(e, p.conv)), win: { ...PRE_BOX[zone], pre: true, stride: 1 } };
+  }
   if (prod === 'goes') {
     // newest-clear-pixel fill across the prefetched hours, same as live
     const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort();
@@ -2679,8 +2731,9 @@ async function preForView(prod) {
   if (!p.family) return null;
   const key = S.src[p.family], s = curSrc(p.family);
   if (s.comp) { if (S.date) return null; const g = await loadComposite(p.family, s.comp, null, zone); return g && { ...g, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, src: key }; }
-  if (s.cm) return null;
-  const id = S.date ? `${zone}/${p.family}/${key}/${S.date}` : (key === 'dineof' ? `${zone}/chl/dineof/latest` : preLatest(zone, p.family, key));
+  if (s.cm && !force) return null;
+  const k2 = s.cm ? 'dineof' : key;               // a Copernicus pick that failed: NOAA's gap-filled copy instead
+  const id = S.date ? `${zone}/${p.family}/${k2}/${S.date}` : (k2 === 'dineof' ? `${zone}/chl/dineof/latest` : preLatest(zone, p.family, k2));
   const e = id && preEntry(id); if (!e || e.none) return null;
   const g = await preGrid(e, p.family === 'chl' ? CHL : SST_C);
   return { ...g, win: { ...PRE_BOX[zone], pre: true, stride: 1 }, src: key };
@@ -2905,8 +2958,8 @@ document.querySelectorAll('.prod').forEach((b) => {
 
 function togglePanel(id, btn) {
   const el = $(id), open = el.hidden;
-  ['layers', 'wpts'].forEach((x) => { $(x).hidden = true; });
-  ['btnLayers', 'btnWpts'].forEach((x) => $(x).classList.remove('open'));
+  ['layers', 'wpts', 'fwPanel'].forEach((x) => { $(x).hidden = true; });
+  ['btnLayers', 'btnWpts', 'btnFind'].forEach((x) => $(x).classList.remove('open'));
   el.hidden = !open; btn.classList.toggle('open', open);
 }
 $('btnLayers').onclick = () => togglePanel('layers', $('btnLayers'));
@@ -2992,8 +3045,9 @@ ht.onchange = () => { S.home = ht.value; hp.value = S.home; store.set('home', S.
 
 // Zone switcher: jump the view and set that zone's home port (for range/bearing and the hot-spot run limit)
 const zs = $('zone');
-const ZONE_GROUPS = [['US East Coast', ['ne', 'ma', 'se', 'fl']], ['Caribbean', ['cancun', 'puntacana', 'stlucia']],
-  ['Mexico & Central America (Pacific)', ['cabo', 'chiapas', 'cr', 'crs']]];
+const ZONE_GROUPS = [['US East Coast', ['ng', 'ne', 'ma', 'se', 'fl']], ['Gulf of Mexico', ['flg', 'gulf', 'tx']],
+  ['Atlantic islands & Caribbean', ['bda', 'tci', 'pr', 'puntacana', 'stlucia', 'cancun']],
+  ['Mexico & Central America (Pacific)', ['cabo', 'chiapas', 'guat', 'cr', 'crs', 'pan']]];
 for (const [label, keys] of ZONE_GROUPS) {
   const og = document.createElement('optgroup'); og.label = label;
   for (const k of keys) { const o = document.createElement('option'); o.value = k; o.textContent = ZONES[k].label; og.appendChild(o); }
@@ -3472,6 +3526,7 @@ function applySettings(st) {
     if (st.maxRun && st.maxRun !== S.maxRun) { $('maxRun').value = st.maxRun; fire($('maxRun'), 'input'); fire($('maxRun')); }
     if (Array.isArray(st.fishDepth)) { $('depMin').value = st.fishDepth[0] ?? ''; $('depMax').value = st.fishDepth[1] ?? ''; fire($('depMin')); }
     if (st.species && st.species !== S.species && [...spSel.options].some((o) => o.value === st.species)) { spSel.value = st.species; fire(spSel); }
+    if (st.fw && typeof st.fw === 'object') { store.set('fw', st.fw); fwLoad(); fwToUi(); }
   } finally { ACCT.applying = false; }
 }
 const localSettings = () => Object.fromEntries(SYNC_KEYS.map((k) => [k, store.get(k, null)]).filter(([, v]) => v != null));
@@ -3486,9 +3541,9 @@ async function syncSettings(first) {
     if (e2) throw e2;
   }
 }
-// ---------- Access: 5-day free trial, then $75/yr; emails on the free_accounts list never pay ----------
+// ---------- Access: 5-day free trial, then $100/yr; emails on the free_accounts list never pay ----------
 // Flip PAYWALL_LIVE to true once Stripe is set up (see supabase/SETUP.md). Until then an ended trial still gets in.
-const PAYWALL_LIVE = false, PRICE_TXT = '$75 a year';
+const PAYWALL_LIVE = false, PRICE_TXT = '$100 a year';
 ACCT.access = store.get('access', null);
 async function checkAccess() {
   if (!ACCT.user) return;
@@ -3550,7 +3605,7 @@ function gateMode(m) {
   G.mode = m; gMsg('');
   const T = {
     signin: ['Sign in', 'Welcome back. Your spots and settings are waiting.', 'Sign in', 'current-password'],
-    signup: ['Start your free trial', '5 days free, no card needed. Then $75 a year. Your spots and settings follow you to every device.', 'Create account', 'new-password'],
+    signup: ['Start your free trial', '5 days free, no card needed. Then $100 a year. Your spots and settings follow you to every device. We use your phone and email for your account and to check in about your trial.', 'Create account', 'new-password'],
     forgot: ['Reset your password', 'Enter your email and we will send you a link to set a new password.', 'Email me a reset link', ''],
     recovery: ['Set a new password', 'Choose a new password for your account.', 'Save password', 'new-password'],
     paywall: ['Your free trial has ended', `Keep every chart, every layer and your saved spots for ${PRICE_TXT}. Cancel any time.`, `Subscribe · ${PRICE_TXT}`, ''],
@@ -3582,7 +3637,7 @@ async function gateSubmit(ev) {
   if (G.mode !== 'recovery' && !/^\S+@\S+\.\S+$/.test(email)) { gMsg('Enter your email address.', true); return; }
   const fullName = $('gName').value.trim().replace(/\s+/g, ' '), phone = $('gPhone').value.trim();
   if (G.mode === 'signup' && fullName.length < 2) { gMsg('Enter your name.', true); return; }
-  if (G.mode === 'signup' && phone && phone.replace(/\D/g, '').length < 10) { gMsg('Check the phone number, or leave it blank.', true); return; }
+  if (G.mode === 'signup' && phone.replace(/\D/g, '').length < 10) { gMsg(phone ? 'Check the phone number (10 digits, with area code).' : 'Enter your phone number.', true); return; }
   if ((G.mode === 'signup' || G.mode === 'recovery') && password.length < 8) { gMsg('Use a password with at least 8 characters.', true); return; }
   $('gGo').disabled = true; gMsg('One moment…');
   const back = location.origin + '/app';
@@ -3590,7 +3645,7 @@ async function gateSubmit(ev) {
     if (G.mode === 'signin') {
       const { error } = await sb.auth.signInWithPassword({ email, password }); if (error) throw error; gMsg('');
     } else if (G.mode === 'signup') {
-      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back, data: { full_name: fullName, phone: phone || null } } }); if (error) throw error;
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: back, data: { full_name: fullName, phone } } }); if (error) throw error;
       if (data.session) gMsg('');
       else if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
         // Supabase answers a sign-up for an existing email with a fake success and sends nothing
@@ -3644,4 +3699,269 @@ window.__S = S; window.__map = map; window.__ACCT = ACCT;
 syncEnc();
 map.on('moveend', queueHiDem);
 queueHiDem();
+
+// ---------- Find your water: search Breakline's saved charts for every patch inside your run that matches ----------
+// Runs on our own copies (checked against NOAA every 10 minutes), so it works even when NOAA is down.
+const FW_KEYS = ['depth', 'temp', 'front', 'chl', 'cur', 'mld', 'sal'];
+const FW_DEF = {
+  port: null, run: null, tempSrc: 'hourly',
+  depth: { on: true, lo: 20, hi: null }, temp: { on: true, lo: null, hi: null }, front: { on: false, mode: 'on' },
+  chl: { on: false, lo: 0.08, hi: 0.4 }, cur: { on: false, lo: null, hi: 1.5 }, mld: { on: false, lo: null, hi: 150 },
+  sal: { on: false, mode: 'range', lo: 35, hi: 36.5 },
+};
+const FW_CELL = 0.04;                 // ~2.4 nm, the saved charts' grid
+// Temp-break cutoffs in °F per nm, set from the saved charts off the Carolinas and Florida (Nov 2026):
+// "on" ~ the sharpest 10% of the water, "strong" ~ the sharpest 5%. The blend is smoother, so its cutoffs are lower.
+const FW_BRK = { hourly: { on: 0.27, strong: 0.4, off: 0.1 }, blend: { on: 0.15, strong: 0.21, off: 0.06 } };
+function fwLoad() {
+  const st = store.get('fw', {}) || {};
+  S.fw = { ...FW_DEF, ...st };
+  for (const k of FW_KEYS) S.fw[k] = { ...FW_DEF[k], ...(st[k] || {}) };
+  if (S.fw.temp.lo == null && S.fw.temp.hi == null) { const sp = SPECIES[S.species] || SPECIES.yellowfin; S.fw.temp.lo = sp.t[1]; S.fw.temp.hi = sp.t[2]; }
+}
+fwLoad();
+const fwNum = (el) => (el && el.value.trim() !== '' && isFinite(+el.value) ? +el.value : null);
+function fwToUi() {
+  const f = S.fw;
+  $('fwPort').value = PORTS.some((p) => p[0] === f.port) ? f.port : S.home;
+  $('fwRun').value = f.run || S.maxRun;
+  document.querySelectorAll('#fwPanel .fwc').forEach((el) => {
+    const c = f[el.dataset.k];
+    el.querySelector('.on').checked = !!c.on; el.classList.toggle('on', !!c.on);
+    if (el.querySelector('.lo')) { el.querySelector('.lo').value = c.lo ?? ''; el.querySelector('.hi').value = c.hi ?? ''; }
+    if (el.querySelector('.mode')) el.querySelector('.mode').value = c.mode;
+  });
+  document.querySelectorAll('#fwTempSrc button').forEach((b) => b.classList.toggle('on', b.dataset.v === f.tempSrc));
+  document.querySelector('#fwPanel .salr').hidden = f.sal.mode !== 'range';
+}
+function fwFromUi() {
+  const f = S.fw;
+  f.port = $('fwPort').value; f.run = fwNum($('fwRun'));
+  document.querySelectorAll('#fwPanel .fwc').forEach((el) => {
+    const c = f[el.dataset.k];
+    c.on = el.querySelector('.on').checked; el.classList.toggle('on', c.on);
+    if (el.querySelector('.lo')) { c.lo = fwNum(el.querySelector('.lo')); c.hi = fwNum(el.querySelector('.hi')); }
+    if (el.querySelector('.mode')) c.mode = el.querySelector('.mode').value;
+  });
+  document.querySelector('#fwPanel .salr').hidden = f.sal.mode !== 'range';
+  store.set('fw', f);
+}
+async function preLatestGrid(zone, key, conv) {
+  const e = preEntry(`${zone}/${key}/latest`);
+  return e?.file ? preGrid(e, conv) : null;
+}
+// newest clear GOES-19 look at every pixel over the last 24 saved hours
+async function preGoesFill(zone) {
+  const hours = Object.keys(PRE.items).filter((k) => k.startsWith(`${zone}/goes/`) && !PRE.items[k].none).sort().slice(-24);
+  if (!hours.length) return null;
+  const grids = await Promise.all(hours.map((k) => preGrid(PRE.items[k], SST_C)));
+  const last = grids[grids.length - 1], v = last.v.slice();
+  for (let k = grids.length - 2; k >= 0; k--) { const sl = grids[k].v; for (let i = 0; i < v.length; i++) if (v[i] !== v[i]) v[i] = sl[i]; }
+  return { ...last, v, times: [hours[hours.length - 1].split('/')[2]], hourly: true };
+}
+async function preBlend(zone) {
+  const id = preLatest(zone, 'sst', 'mur') || preLatest(zone, 'sst', 'geopolar');
+  return id ? preGrid(PRE.items[id], SST_C) : null;
+}
+// gradient strength per nautical mile (central difference: spans ~5 nm on the saved charts)
+function gradNm(g) {
+  const out = new Float32Array(g.nx * g.ny).fill(NaN), dy = g.dlat * 60;
+  for (let j = 1; j < g.ny - 1; j++) {
+    const dx = g.dlon * 60 * Math.cos((g.lat0 + j * g.dlat) * Math.PI / 180);
+    for (let i = 1; i < g.nx - 1; i++) {
+      const k = j * g.nx + i, m = Math.hypot((g.v[k + 1] - g.v[k - 1]) / (2 * dx), (g.v[k + g.nx] - g.v[k - g.nx]) / (2 * dy));
+      if (m === m) out[k] = m;
+    }
+  }
+  return { ...g, v: out };
+}
+const fwIn = (x, lo, hi) => x === x && (lo == null || x >= lo) && (hi == null || x <= hi);
+const fwRange = (a, b, f) => (f(a) === f(b) ? f(a) : `${f(a)}-${f(b)}`);
+async function findWater() {
+  fwFromUi();
+  const f = S.fw, port = PORTS.find((x) => x[0] === f.port), on = (k) => f[k].on;
+  const msg = (t, err) => { $('fwMsg').innerHTML = t; $('fwMsg').classList.toggle('err', !!err); };
+  if (!port) return msg('Pick a home port.', true);
+  if (!FW_KEYS.some(on)) return msg('Turn on at least one thing to look for.', true);
+  const R = clamp(f.run || S.maxRun, 5, 400);
+  for (const k of ['depth', 'temp', 'chl', 'cur', 'mld']) if (on(k) && f[k].lo != null && f[k].hi != null && f[k].lo > f[k].hi) return msg('One of the ranges has its min above its max.', true);
+  if (on('sal') && f.sal.mode === 'range' && f.sal.lo != null && f.sal.hi != null && f.sal.lo > f.sal.hi) return msg('The salinity range has its min above its max.', true);
+  $('fwGo').disabled = true; msg('Searching the saved charts…'); $('fwList').innerHTML = '';
+  try {
+    await preReady; if (!PRE) await loadManifest();
+    if (!PRE) throw new Error('The saved charts didn\'t load. Check your connection and try again.');
+    await bathy2Ready;
+    const pla = port[1], plo = port[2], dLa = R / 60, dLo = R / (60 * Math.cos(pla * Math.PI / 180));
+    let box = { s: pla - dLa, n: pla + dLa, w: plo - dLo, e: plo + dLo };
+    // the saved-chart box holding most of the run (the smaller box wins a tie: same data, less to load)
+    const zs = Object.entries(PRE.zones || PRE_BOX).map(([k, b]) => [k, b, Math.max(0, Math.min(b.n, box.n) - Math.max(b.s, box.s)) * Math.max(0, Math.min(b.e, box.e) - Math.max(b.w, box.w)), (b.n - b.s) * (b.e - b.w)])
+      .filter((z) => z[2] > 0).sort((a, b) => b[2] - a[2] || a[3] - b[3]);
+    if (!zs.length) throw new Error('Breakline doesn\'t have saved charts around that port yet.');
+    const [zone, zb] = zs[0];
+    box = { s: Math.max(box.s, zb.s), n: Math.min(box.n, zb.n), w: Math.max(box.w, zb.w), e: Math.min(box.e, zb.e) };
+    const got = {};
+    const tempSrc = f.tempSrc === 'blend' ? 'blend' : 'hourly';
+    await Promise.all([
+      (on('temp') || on('front')) && (tempSrc === 'hourly' ? preGoesFill(zone) : preBlend(zone)).then((g) => { got.temp = g; }),
+      on('chl') && preLatestGrid(zone, 'chl/dineof', CHL).then((g) => { got.chl = g; }),
+      on('cur') && preCurrents(zone).then((g) => { got.cur = g; }),
+      on('mld') && preLatestGrid(zone, 'mld/ohc', PRODUCTS.mld.conv).then((g) => { got.mld = g; }),
+      on('sal') && preLatestGrid(zone, 'sss/smap', PRODUCTS.sss.conv).then((g) => { got.sal = g; }),
+    ].filter(Boolean).map((p) => p.catch((e) => console.warn('find water layer', e))));
+    const dep = bathyFromStatic(box);
+    const tg = on('front') && got.temp ? gradNm(got.temp) : null, sg = on('sal') && f.sal.mode === 'edge' && got.sal ? gradNm(got.sal) : null;
+    const LBL = { depth: 'depth', temp: 'water temp', front: 'temp breaks', chl: 'color', cur: 'currents', mld: 'mixed layer', sal: 'salinity' };
+    const have = { depth: !!dep, temp: !!got.temp, front: !!got.temp, chl: !!got.chl, cur: !!got.cur, mld: !!got.mld, sal: !!got.sal };
+    const use = FW_KEYS.filter((k) => on(k) && have[k]), missing = FW_KEYS.filter((k) => on(k) && !have[k]);
+    if (!use.length) throw new Error(`No saved ${missing.map((k) => LBL[k]).join(', ')} for this area yet. Try again in a few minutes.`);
+    const nx = Math.round((box.e - box.w) / FW_CELL) + 1, ny = Math.round((box.n - box.s) / FW_CELL) + 1, n = nx * ny;
+    const hit = new Uint8Array(n), V = {};
+    for (const k of ['fm', 'T', 'chl', 'kt', 'mld', 'sal']) V[k] = new Float32Array(n).fill(NaN);
+    let water = 0, matched = 0, blind = 0;
+    // salinity edge: the sharpest 20% of salinity change in this area (SMAP is a 25 km product, so a fixed cutoff fits nowhere)
+    let salCut = Infinity;
+    if (sg) {
+      const xs = [];
+      for (let j = 0; j < sg.ny; j++) { const la = sg.lat0 + j * sg.dlat; if (la < box.s || la > box.n) continue;
+        for (let i = 0; i < sg.nx; i++) { const lo = sg.lon0 + i * sg.dlon, x = sg.v[j * sg.nx + i]; if (lo >= box.w && lo <= box.e && x === x) xs.push(x); } }
+      xs.sort((a, b) => a - b); if (xs.length) salCut = Math.max(0.004, xs[Math.floor(xs.length * 0.8)]);
+    }
+    const alone = Object.fromEntries(use.map((k) => [k, 0])), seen = {};   // how much water passes each setting by itself / has data
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const la = box.s + j * FW_CELL, lo = box.w + i * FW_CELL, k = j * nx + i;
+      if (rangeBearing([pla, plo], [la, lo])[0] > R) continue;
+      const z = dep ? sample(dep, la, lo) : NaN, T = got.temp ? sample(got.temp, la, lo) : NaN;
+      if (dep ? !(z < 0) : T !== T) continue;          // land
+      water++;
+      const fm = -z / FATHOM; V.fm[k] = fm; V.T[k] = T;
+      if (on('temp') && have.temp && T !== T) blind++;
+      const pass = {};
+      if (use.includes('depth')) pass.depth = fwIn(fm, f.depth.lo, f.depth.hi);
+      if (use.includes('temp')) pass.temp = fwIn(T, f.temp.lo, f.temp.hi);
+      if (tg) { const gr = sample(tg, la, lo), cut = FW_BRK[tempSrc]; pass.front = f.front.mode === 'off' ? gr < cut.off : gr >= cut[f.front.mode]; }
+      if (use.includes('chl')) { const x = sample(got.chl, la, lo); V.chl[k] = x; pass.chl = fwIn(x, f.chl.lo, f.chl.hi); }
+      if (use.includes('cur')) { const u = sample(got.cur, la, lo, got.cur.u), v = sample(got.cur, la, lo, got.cur.vv), kt = Math.hypot(u, v) * 1.94384; V.kt[k] = kt; pass.cur = fwIn(kt, f.cur.lo, f.cur.hi); }
+      if (use.includes('mld')) { const x = sample(got.mld, la, lo); V.mld[k] = x; pass.mld = fwIn(x, f.mld.lo, f.mld.hi); }
+      if (use.includes('sal')) { const x = sample(got.sal, la, lo); V.sal[k] = x; pass.sal = f.sal.mode === 'edge' ? sample(sg, la, lo) >= salCut : fwIn(x, f.sal.lo, f.sal.hi); }
+      let all = true;
+      for (const c of use) if (pass[c]) alone[c]++; else all = false;
+      for (const [c, x] of [['temp', T], ['chl', V.chl[k]], ['cur', V.kt[k]], ['mld', V.mld[k]], ['sal', V.sal[k]]]) if (x === x) seen[c] = (seen[c] || 0) + 1;
+      if (all) { hit[k] = 1; matched++; }
+    }
+    // group touching matches into patches
+    const lab = new Int32Array(n).fill(-1), areas = [];
+    for (let k0 = 0; k0 < n; k0++) {
+      if (!hit[k0] || lab[k0] >= 0) continue;
+      const a = { cells: [] }, st = [k0], id = areas.length; lab[k0] = id;
+      while (st.length) {
+        const k = st.pop(), j = Math.floor(k / nx), i = k % nx; a.cells.push(k);
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const jj = j + dj, ii = i + di, kk = jj * nx + ii;
+          if (jj >= 0 && jj < ny && ii >= 0 && ii < nx && hit[kk] && lab[kk] < 0) { lab[kk] = id; st.push(kk); }
+        }
+      }
+      areas.push(a);
+    }
+    for (const a of areas) {
+      let sla = 0, slo = 0, nm2 = 0, bb = [90, 180, -90, -180];
+      const span = {};
+      for (const k of a.cells) {
+        const la = box.s + Math.floor(k / nx) * FW_CELL, lo = box.w + (k % nx) * FW_CELL;
+        sla += la; slo += lo; nm2 += (FW_CELL * 60) ** 2 * Math.cos(la * Math.PI / 180);
+        bb = [Math.min(bb[0], la), Math.min(bb[1], lo), Math.max(bb[2], la), Math.max(bb[3], lo)];
+        for (const v of ['fm', 'T', 'chl', 'kt', 'mld', 'sal']) { const x = V[v][k]; if (x === x) { const s = (span[v] ||= [x, x]); s[0] = Math.min(s[0], x); s[1] = Math.max(s[1], x); } }
+      }
+      const cla = sla / a.cells.length, clo = slo / a.cells.length;
+      let best = a.cells[0], bd = Infinity;          // the matching cell nearest the middle of the patch
+      for (const k of a.cells) { const d = (box.s + Math.floor(k / nx) * FW_CELL - cla) ** 2 + (box.w + (k % nx) * FW_CELL - clo) ** 2; if (d < bd) { bd = d; best = k; } }
+      Object.assign(a, { nm2, bb, span, lat: box.s + Math.floor(best / nx) * FW_CELL, lon: box.w + (best % nx) * FW_CELL });
+      [a.dist, a.brg] = rangeBearing([pla, plo], [a.lat, a.lon]);
+      delete a.cells;
+    }
+    areas.sort((a, b) => b.nm2 - a.nm2);
+    S.fwHits = { box, nx, ny, hit, areas, port: [pla, plo], R };
+    const side = innerWidth > 700 && !$('fwPanel').hidden ? $('fwPanel').offsetWidth + 70 : 20;   // keep the matches out from under the panel
+    map.fitBounds([[box.s, box.w], [box.n, box.e]], { paddingTopLeft: [70, 60], paddingBottomRight: [side, 40] });
+    chart.draw();
+    // what the search used, and how old it is
+    const asOf = [];
+    if (got.temp) asOf.push(`water temp ${tempSrc === 'hourly' ? `hourly to ${niceHour(got.temp.times[0])}` : `blend ${nice(got.temp.date)}`}`);
+    if (got.chl) asOf.push(`color ${nice(got.chl.date)}`);
+    if (got.cur) asOf.push(`currents ${nice(got.cur.date)}`);
+    if (got.mld) asOf.push(`mixed layer ${nice(got.mld.date)}`);
+    if (got.sal) asOf.push(`salinity ${nice(got.sal.date)}`);
+    const total = areas.reduce((s, a) => s + a.nm2, 0);
+    let t = matched ? `<b>${areas.length} patch${areas.length === 1 ? '' : 'es'}, about ${Math.round(total).toLocaleString()} sq nm</b> inside ${R} nm of ${port[0]} match.` : `Nothing inside ${R} nm of ${port[0]} matches all of that. Widen a range or turn something off.`;
+    // each setting on its own: shows which one is doing the cutting
+    if (water && use.length > 1) t += `<br>On its own: ${use.map((c) => `${LBL[c]} ${Math.round(100 * alone[c] / water)}%`).join(' · ')} of the water.`;
+    const blank = use.filter((c) => c !== 'depth' && c !== 'front' && !(c === 'temp' && tempSrc === 'hourly') && water && (seen[c] || 0) / water < 0.1);
+    if (blank.length) t += `<br>${blank.map((c) => LBL[c]).join(', ')}: NOAA has no reading for most of this area${blank.includes('mld') ? ' (it only computes mixed layer in warm, Gulf Stream-type water)' : ''}, so ${blank.length > 1 ? 'they rule' : 'it rules'} it out. Turn ${blank.length > 1 ? 'them' : 'it'} off here.`;
+    if (missing.length) t += `<br>Skipped (no saved data for this area yet): ${missing.map((k) => LBL[k]).join(', ')}.`;
+    if (blind && water && blind / water > 0.25) t += `<br>${Math.round(100 * blind / water)}% of the run is under cloud on the hourly temp. Switch to Blend to see through it.`;
+    if (asOf.length) t += `<br>Data: ${asOf.join(' · ')}.`;
+    msg(t);
+    const fmt1 = (x) => x.toFixed(1), fm0 = (x) => Math.round(x).toLocaleString();
+    $('fwList').innerHTML = areas.slice(0, 15).map((a, i) => {
+      const p = [];
+      if (a.span.T) p.push(`${fwRange(...a.span.T, fmt1)}°F`);
+      if (a.span.fm) p.push(`${fwRange(...a.span.fm, fm0)} fm`);
+      if (a.span.chl) p.push(`${fwRange(...a.span.chl, (x) => x.toFixed(2))} mg/m³`);
+      if (a.span.kt) p.push(`${fwRange(...a.span.kt, fmt1)} kt`);
+      if (a.span.mld) p.push(`MLD ${fwRange(...a.span.mld, fm0)} ft`);
+      if (a.span.sal) p.push(`${fwRange(...a.span.sal, (x) => x.toFixed(2))} PSU`);
+      return `<li data-i="${i}"><b>${i + 1}. ${a.nm2 < 10 ? a.nm2.toFixed(1) : Math.round(a.nm2).toLocaleString()} sq nm</b><small>${p.join(' · ')}<br>${fmtLL(a.lat, a.lon)}${inLoran(a.lat, a.lon) ? ` · TD ${fmtTd(a.lat, a.lon)}` : ''}<br>${a.dist.toFixed(0)} nm @ ${Math.round(a.brg)}°T from ${port[0]}</small></li>`;
+    }).join('') + (areas.length > 15 ? `<li><small>+${areas.length - 15} smaller patches on the chart</small></li>` : '');
+    $('fwList').querySelectorAll('li[data-i]').forEach((li) => {
+      li.onclick = () => {
+        const a = S.fwHits.areas[+li.dataset.i], pad = FW_CELL * 2;
+        map.fitBounds([[a.bb[0] - pad, a.bb[1] - pad], [a.bb[2] + pad, a.bb[3] + pad]], { maxZoom: 10, padding: [30, 30] });
+        openReading(L.latLng(a.lat, a.lon), `Match ${+li.dataset.i + 1}`);
+      };
+    });
+  } catch (e) {
+    console.warn('find water', e); msg(e.message || 'Search failed. Try again.', true);
+  } finally { $('fwGo').disabled = false; }
+}
+function drawFindWater(ctx) {
+  const h = S.fwHits; if (!h) return;
+  ctx.save();
+  const [cx, cy] = project(h.port[0], h.port[1]), [, ty] = project(h.port[0] + h.R / 60, h.port[1]);
+  ctx.setLineDash([7, 6]); ctx.strokeStyle = 'rgba(53,194,255,.85)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, Math.abs(cy - ty), 0, 7); ctx.stroke(); ctx.setLineDash([]);
+  const d = FW_CELL / 2, [x0] = project(h.box.s, h.box.w), [x1] = project(h.box.s, h.box.w + FW_CELL), cw = Math.max(1, x1 - x0) + 0.6;
+  ctx.fillStyle = 'rgba(53,194,255,.42)'; ctx.beginPath();
+  for (let k = 0; k < h.hit.length; k++) {
+    if (!h.hit[k]) continue;
+    const la = h.box.s + Math.floor(k / h.nx) * FW_CELL, lo = h.box.w + (k % h.nx) * FW_CELL;
+    const [x, ya] = project(la + d, lo - d), [, yb] = project(la - d, lo - d);
+    ctx.rect(x, ya, cw, yb - ya + 0.6);
+  }
+  ctx.fill();
+  ctx.font = '800 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  h.areas.slice(0, 15).forEach((a, i) => {
+    const [x, y] = project(a.lat, a.lon);
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, 7); ctx.fillStyle = '#35c2ff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#04121d'; ctx.stroke();
+    ctx.fillStyle = '#04121d'; ctx.fillText(String(i + 1), x, y + 0.5);
+  });
+  ctx.restore();
+}
+// panel wiring
+$('fwPort').innerHTML = PORTS.map((p) => `<option>${p[0]}</option>`).join('');
+fwToUi();
+$('fwPanel').addEventListener('change', () => fwFromUi());
+document.querySelectorAll('#fwTempSrc button').forEach((b) => { b.onclick = () => { S.fw.tempSrc = b.dataset.v; store.set('fw', S.fw); fwToUi(); }; });
+$('fwGo').onclick = findWater;
+$('fwFill').onclick = () => {
+  const sp = SPECIES[S.species] || SPECIES.yellowfin;
+  Object.assign(S.fw.temp, { on: true, lo: sp.t[1], hi: sp.t[2] });
+  if (!sp.inshore) Object.assign(S.fw.depth, { on: true, lo: sp.fm || null, hi: null });
+  store.set('fw', S.fw); fwToUi();
+  $('fwMsg').textContent = `Temp ${sp.t[1]}-${sp.t[2]}°F${sp.inshore ? '' : ` and ${sp.fm}+ fm`} for ${sp.label.toLowerCase()}.`; $('fwMsg').classList.remove('err');
+};
+$('fwClear').onclick = () => { S.fwHits = null; $('fwList').innerHTML = ''; $('fwMsg').textContent = ''; chart.draw(); };
+$('btnFind').onclick = () => {
+  togglePanel('fwPanel', $('btnFind'));
+  if (!$('fwPanel').hidden) { $('fishPanel').hidden = true; $('anaPanel').hidden = true; if (!S.fw.port) fwToUi(); }
+};
+$('fwClose').onclick = () => { $('fwPanel').hidden = true; $('btnFind').classList.remove('open'); };
 })();

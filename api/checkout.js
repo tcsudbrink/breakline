@@ -1,5 +1,5 @@
-// POST /api/checkout -> { url } of a Stripe Checkout page for the $75/year plan
-import { ready, json, userFrom, subscriptionRow, stripe, env, origin } from './_lib.js';
+// POST /api/checkout -> { url } of a Stripe Checkout page for the $100/year plan
+import { ready, json, userFrom, subscriptionRow, stripe, env, origin, PRICE_YEARLY } from './_lib.js';
 
 export async function POST(request) {
   if (!ready()) return json({ error: 'not_configured' }, 503);
@@ -10,7 +10,7 @@ export async function POST(request) {
     const base = origin(request);
     const session = await stripe('checkout/sessions', {
       mode: 'subscription',
-      line_items: { 0: { price: env.STRIPE_PRICE_ID, quantity: 1 } },
+      line_items: { 0: { price: PRICE_YEARLY, quantity: 1 } },
       client_reference_id: user.id,
       ...(sub?.stripe_customer_id ? { customer: sub.stripe_customer_id } : { customer_email: user.email }),
       subscription_data: { metadata: { user_id: user.id } },

@@ -50,13 +50,13 @@ Supabase -> **Table Editor** -> `free_accounts` -> **Insert row**: their email (
 
 ## Trial and subscription rules
 - New accounts get 5 days free from the moment they sign up (no card).
-- After that they need an active subscription ($75/year) unless they're on `free_accounts`.
+- After that they need an active subscription ($100/year) unless they're on `free_accounts`.
 - The check runs in the database (`my_access()`), so nobody can change it from their browser.
 - Until Stripe is set up, `PAYWALL_LIVE` in app.js is `false`: an ended trial still gets in. Flip it to `true` after step 6 below.
 
 ## 6. Turning on payments (Stripe)
 1. Create a Stripe account at https://stripe.com (yours to do), and leave it in **Test mode** at first.
-2. **Product catalog** -> **Add product**: name `Breakline`, price **$75.00**, **Recurring**, **Yearly**. Copy the price ID (`price_...`).
+2. **Product catalog** -> **Add product**: name `Breakline`, price **$100.00**, **Recurring**, **Yearly**. Copy the price ID (`price_...`).
 3. **Developers** -> **Webhooks** -> **Add endpoint**:
    - URL: `https://www.breaklinefishing.com/api/stripe-webhook`
    - Events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`
@@ -64,7 +64,7 @@ Supabase -> **Table Editor** -> `free_accounts` -> **Insert row**: their email (
 4. **Settings** -> **Billing** -> **Customer portal**: turn it on (lets people update their card or cancel).
 5. In Vercel -> breakline -> **Settings** -> **Environment Variables**, add for Production:
    - `STRIPE_SECRET_KEY` = Stripe secret key (`sk_test_...`, later `sk_live_...`)
-   - `STRIPE_PRICE_ID` = the `price_...` from step 2
+   - `STRIPE_PRICE_YEARLY` = the `price_...` from step 2 (optional in test mode: the code defaults to the $100 test price)
    - `STRIPE_WEBHOOK_SECRET` = the `whsec_...` from step 3
    - `SUPABASE_SECRET_KEY` = Supabase -> Project Settings -> API Keys -> Secret keys (`sb_secret_...`)
    Then redeploy. These never go in the code or in chat.

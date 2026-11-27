@@ -1,7 +1,8 @@
 // Shared helpers for the payment functions (files starting with _ are not deployed as endpoints).
 // Secrets live in Vercel -> Project -> Settings -> Environment Variables, never in the repo:
 //   STRIPE_SECRET_KEY      sk_live_... (or sk_test_... while testing)
-//   STRIPE_PRICE_ID        price_... for the $75/year plan
+//   STRIPE_PRICE_YEARLY    price_... for the $100/year plan (optional: defaults to PRICE_YEARLY below, the test-mode price;
+//                          set it to the live price when Stripe goes live)
 //   STRIPE_WEBHOOK_SECRET  whsec_... from the webhook endpoint
 //   SUPABASE_SECRET_KEY    sb_secret_... (Supabase -> Project Settings -> API Keys -> Secret keys)
 import crypto from 'node:crypto';
@@ -9,7 +10,8 @@ import crypto from 'node:crypto';
 export const SB_URL = 'https://uydsbqqjuxhbhhujhsgd.supabase.co';
 const SB_PUBLISHABLE = 'sb_publishable_qQLZTM_1THgVTToQZAhiYA_IY5IEdL9';
 export const env = process.env;
-export const ready = () => !!(env.STRIPE_SECRET_KEY && env.STRIPE_PRICE_ID && env.SUPABASE_SECRET_KEY);
+export const PRICE_YEARLY = env.STRIPE_PRICE_YEARLY || 'price_1UgPrGCnMDwUU9Cw4kUQi8wC';   // $100/year, Stripe test mode
+export const ready = () => !!(env.STRIPE_SECRET_KEY && PRICE_YEARLY && env.SUPABASE_SECRET_KEY);
 export const json = (body, status = 200) => Response.json(body, { status });
 
 // The signed-in Breakline user behind a request (from the app's Supabase session token)

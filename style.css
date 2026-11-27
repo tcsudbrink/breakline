@@ -277,6 +277,22 @@ button.ghost { background: transparent !important; }
 
 /* Ocean analysis write-up */
 #anaPanel { width: 330px; }
+/* Find your water */
+#fwPanel { width: 310px; max-height: calc(100% - 120px); overflow-y: auto; }
+.fwc { border-top: 1px solid var(--line); padding: 6px 0 2px; }
+.fwc > label { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 0; }
+.fwc:not(.on) .row2, .fwc:not(.on) .fwnote { display: none; }
+.fwc .fwnote { margin: 2px 0 4px; }
+.seg { gap: 0 !important; }
+.seg button { flex: 1; border-radius: 0 !important; }
+.seg button:first-child { border-radius: 6px 0 0 6px !important; }
+.seg button:last-child { border-radius: 0 6px 6px 0 !important; }
+.seg button.on { background: var(--accent) !important; color: #04121d !important; font-weight: 700; }
+#fwList { list-style: none; padding: 0; margin: 6px 0 0; }
+#fwList li { padding: 7px 0; border-top: 1px solid var(--line); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+#fwList li:hover b { color: var(--accent); }
+#fwList small { color: var(--muted); font-variant-numeric: tabular-nums; }
+#fwMsg.err { color: #ff9b8a; }
 #anaBody h4 { margin: 12px 0 4px; font-size: 12.5px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
 #anaBody p { margin: 4px 0; font-size: 13px; line-height: 1.45; }
 #anaBody ul { list-style: none; padding: 0; margin: 4px 0; }

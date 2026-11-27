@@ -1,13 +1,15 @@
-"""Breakline hourly prefetch.
+"""Breakline prefetch: our own copy of NOAA's charts.
 
-Pulls the slow NOAA charts for each zone once an hour and saves each one as a small 8-bit
+Checks NOAA every 10 minutes for new charts in each zone and saves each one as a small 8-bit
 grayscale PNG (value-encoded) plus live/manifest.json, so the app and the chart picker load them
 from the Netlify CDN in about a second instead of waiting on NOAA.
 
     python prefetch.py [out_dir]          (default: live/)
 
 Only fetches what isn't already in out_dir, and prunes anything older than the keep windows.
-Runs on GitHub Actions every hour (.github/workflows/prefetch.yml); also works locally.
+Runs on GitHub Actions every 10 minutes (.github/workflows/prefetch.yml); also works locally.
+If NOAA is down, the app falls back to these copies, and Find your water searches them.
+Sets changed=true|false in $GITHUB_OUTPUT so the workflow only republishes when something is new.
 """
 import concurrent.futures as cf
 import datetime as dt
@@ -34,6 +36,7 @@ ZONES = {
     "cancun": dict(s=18.5, n=23.5, w=-89.0, e=-84.0),
     "puntacana": dict(s=16.5, n=21.0, w=-71.5, e=-66.0),
     "stlucia": dict(s=11.5, n=16.0, w=-63.0, e=-59.0),
+    "pr": dict(s=16.5, n=20.0, w=-68.5, e=-63.5),      # Puerto Rico, USVI, BVI
 }
 CELL = 0.04                                           # ~4 km: plenty for overview + thumbnails
 # (GOES-19 hourly covers every zone; NOAA-21's US sector reaches 142W-52W, 0-60N, so it covers them too)
@@ -56,11 +59,21 @@ SOURCES = {
     "chl/n21": ("chl", "cw", "noaacwN21VIIRSchlaSectorUSDaily", "chlor_a", 0.0075, False, True, "18:00:00Z"),
     "chl/n20": ("chl", "cw", "noaacwN20VIIRSchlaDaily", "chlor_a", 0.0375, False, True, "12:00:00Z"),
     "goes": ("sst", "aoml", "goes19SSThourly", "sst", 0.02, True, False, None),
+    # Daily products kept as "latest" only (refreshed when older than LATEST_MAX_AGE_H)
+    "ssh/blend": ("sla", "cw", "noaacwBLENDEDsshDaily", "sla", 0.25, True, False, None),
+    "mld/ohc": ("mld", "cw", "noaacwOHC14na", "omld", 0.25, True, False, None),
+    "sss/smap": ("sss", "cw", "noaacwSMAPsssDaily", "sss", 0.25, True, True, None),
+    "cur/u": ("cur", "cw", "noaacwBLENDEDNRTcurrentsDaily", "u_current", 0.25, True, False, None),
+    "cur/v": ("cur", "cw", "noaacwBLENDEDNRTcurrentsDaily", "v_current", 0.25, True, False, None),
 }
+LATEST = {"chl/dineof", "ssh/blend", "mld/ohc", "sss/smap", "cur/u", "cur/v"}
+LATEST_MAX_AGE_H = 3
+NOT_IN = {"mld/ohc": {"cr", "cabo"}}                   # NOAA's mixed-layer product stops short of the Pacific boxes
 DAYS = {"sst": 4, "chl": 7}
 GOES_HOURS = 72                                       # 3 days of hourly scans: feeds the 3-day composite
 # 8-bit encodings (0 = no data): SST in deg C, chlorophyll as log10(mg/m3). Mirrored in app.js (PRE_ENC).
-ENC = {"sst": (-2.0, 34.0, False), "chl": (0.01, 50.0, True)}
+ENC = {"sst": (-2.0, 34.0, False), "chl": (0.01, 50.0, True),
+       "sla": (-1.5, 1.5, False), "mld": (1.0, 1000.0, True), "sss": (20.0, 42.0, False), "cur": (-2.5, 2.5, False)}
 
 
 def get(url, timeout=150):
@@ -116,14 +129,28 @@ def fetch(zone, key, when, time_str):
         return {"none": True}
     if not np.isfinite(v).any():
         return {"none": True, "cloud": True}
-    fn = f"{zone}_{key.replace('/', '_')}_{when.replace(':', '').replace('-', '')}.png"
+    # "latest" files carry the data date, so a refreshed copy never hides behind a cached old one
+    tag = t.strftime("%Y%m%d") + "L" if when == "latest" else when.replace(':', '').replace('-', '')
+    fn = f"{zone}_{key.replace('/', '_')}_{tag}.png"
     Image.fromarray(encode(fam, v), "L").save(os.path.join(OUT, fn), optimize=True)
     return {
         "file": fn, "enc": fam, "time": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "lat0": round(float(lat[0]), 5), "dlat": round(float(lat[1] - lat[0]), 6),
         "lon0": round(float(lon[0]), 5), "dlon": round(float(lon[1] - lon[0]), 6),
-        "nx": int(len(lon)), "ny": int(len(lat)),
+        "nx": int(len(lon)), "ny": int(len(lat)), "got": now_iso(),
     }
+
+
+def now_iso():
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def age_h(e):
+    """Hours since we last asked NOAA for this entry (old entries without a stamp count as old)."""
+    try:
+        return (dt.datetime.now(dt.timezone.utc) - dt.datetime.strptime(e["got"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)).total_seconds() / 3600
+    except Exception:  # noqa: BLE001
+        return 99.0
 
 
 def seed(base):
@@ -167,18 +194,22 @@ def main():
                 for h in range(3, GOES_HOURS + 3):       # GOES data lags ~4-5 h
                     hs = (now - dt.timedelta(hours=h)).strftime("%Y-%m-%dT%H:00:00Z")
                     e = items.get(f"{zone}/goes/{hs}")
-                    if not e or (e.get("none") and h <= 8):
+                    # an hour with no scan yet is re-asked every 30 min for the first 8 hours (GOES lags 4-5 h)
+                    if not e or (e.get("none") and h <= 8 and age_h(e) >= 0.5):
                         jobs.append((zone, key, hs, hs))
                 continue
-            if key == "chl/dineof":                      # gap-filled blend: keep the newest, refresh twice a day
-                if f"{zone}/{key}/latest" not in items or now.hour % 12 == 0:
+            if zone in NOT_IN.get(key, ()):
+                continue
+            if key in LATEST:                            # newest copy only, refreshed every few hours
+                e = items.get(f"{zone}/{key}/latest")
+                if not e or age_h(e) >= LATEST_MAX_AGE_H:
                     jobs.append((zone, key, "latest", "last"))
                 continue
             for d in range(1, DAYS[fam] + 1):
                 day = (today - dt.timedelta(days=d)).isoformat()
                 e = items.get(f"{zone}/{key}/{day}")
                 # re-check the last 2 days while missing or empty (late passes arrive)
-                if e and not (d <= 2 and e.get("none")):
+                if e and not (d <= 2 and e.get("none") and age_h(e) >= 1):
                     continue
                 jobs.append((zone, key, day, f"{day}T{s[7]}"))
 
@@ -195,6 +226,7 @@ def main():
         for _ in range(2):
             try:
                 e = fetch(zone, key, when, tstr)
+                e.setdefault("got", now_iso())
                 fails[host] = 0
                 return f"{zone}/{key}/{when}", e, round(time.time() - t0, 1)
             except Exception as ex:  # noqa: BLE001
@@ -206,7 +238,11 @@ def main():
                 time.sleep(3)
         return f"{zone}/{key}/{when}", None, err
 
+    only = os.environ.get("PREFETCH_ONLY")                # testing: e.g. PREFETCH_ONLY=ssh,cur
+    if only:
+        jobs = [j for j in jobs if any(j[1].startswith(o) for o in only.split(","))]
     print(f"{len(jobs)} charts to fetch", flush=True)
+    changed = False
     deadline = time.time() + float(os.environ.get("PREFETCH_BUDGET_S", "2400"))
     # NOAA asks for gentle clients: 4 at a time, and stop at the time budget (the rest waits for next hour)
     with cf.ThreadPoolExecutor(4) as ex:
@@ -214,7 +250,13 @@ def main():
         for f in cf.as_completed(futs):
             ident, e, info = f.result()
             if e is not None:
+                old = items.get(ident)
+                if old and old.get("file") and e.get("file") and old["file"] != e["file"] and os.path.exists(os.path.join(OUT, old["file"])):
+                    os.remove(os.path.join(OUT, old["file"]))      # replaced "latest" copy
+                if old and old.get("file") and not e.get("file"):
+                    continue                                       # NOAA came back empty: keep the copy we have
                 items[ident] = e
+                changed = True
             print(("OK  " if e and not e.get("none") else "none" if e else "FAIL"), ident, info, flush=True)
             if time.time() > deadline:
                 print("time budget reached; the rest waits for the next run", flush=True)
@@ -232,10 +274,14 @@ def main():
             if fn and os.path.exists(os.path.join(OUT, fn)):
                 os.remove(os.path.join(OUT, fn))
             del items[ident]
+            changed = True
     man.update(updated=now.strftime("%Y-%m-%dT%H:%M:%SZ"), zones=ZONES, enc=ENC)
     json.dump(man, open(mpath, "w"), separators=(",", ":"))
     ok = sum(1 for e in items.values() if not e.get("none"))
-    print(f"manifest: {len(items)} entries, {ok} with data", flush=True)
+    print(f"manifest: {len(items)} entries, {ok} with data; changed={changed}", flush=True)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+            fh.write("changed=" + ("true" if changed else "false") + chr(10))
 
 
 if __name__ == "__main__":
