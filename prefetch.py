@@ -72,7 +72,7 @@ SOURCES = {
     "chl/s3a": ("chl", "cw", "noaacwS3AOLCIchlaDaily", "chlor_a", 0.0375, False, True, "12:00:00Z"),
     "chl/s3b": ("chl", "cw", "noaacwS3BOLCIchlaDaily", "chlor_a", 0.0375, False, True, "12:00:00Z"),
     "chl/n21": ("chl", "cw", "noaacwN21VIIRSchlaSectorUSDaily", "chlor_a", 0.0075, False, True, "18:00:00Z"),
-    "chl/n20": ("chl", "cw", "noaacwN20VIIRSchlaDaily", "chlor_a", 0.0375, False, True, "12:00:00Z"),
+    # chl/n20 (noaacwN20VIIRSchlaDaily) dropped Nov 2026: NOAA stopped updating it on Nov 18, so every ask 404'd
     "goes": ("sst", "aoml", "goes19SSThourly", "sst", 0.02, True, False, None),
     # Daily products kept as "latest" only (refreshed when older than LATEST_MAX_AGE_H)
     "ssh/blend": ("sla", "cw", "noaacwBLENDEDsshDaily", "sla", 0.25, True, False, None),
@@ -301,6 +301,12 @@ def main():
                     continue
                 jobs.append((zone, key, day, f"{day}T{s[7]}"))
 
+    # Newest first, every zone before any zone's older days: the "latest" products, then yesterday for every zone,
+    # then the day before... A run that hits its time budget has still covered every region's freshest charts
+    # (zone order alone meant Australia, last in the list, never got reached).
+    zi = {z: i for i, z in enumerate(ZONES)}
+    jobs.sort(key=lambda j: (0 if j[2] == "latest" else (today - dt.date.fromisoformat(j[2])).days, zi[j[0]]))
+
     # Fail fast: after 4 failures in a row on one NOAA server, skip it for the rest of this run
     # (it gets retried next hour) instead of waiting ~20 s on every request to a server that's down.
     fails = {h: 0 for h in HOSTS}
@@ -319,6 +325,9 @@ def main():
                 return f"{zone}/{key}/{when}", e, round(time.time() - t0, 1)
             except Exception as ex:  # noqa: BLE001
                 err = str(ex)[:90]
+                if "404" in err:                  # ERDDAP's "nothing for that day (yet)": note it, ask again in an hour
+                    fails[host] = 0
+                    return f"{zone}/{key}/{when}", {"none": True, "got": now_iso()}, "404"
                 if any(x in err for x in ("502", "503", "504", "timed out", "urlopen error", "Connection", "10060", "refused", "reset")):
                     fails[host] += 1
                     if fails[host] >= 4:

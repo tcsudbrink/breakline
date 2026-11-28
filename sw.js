@@ -3,7 +3,7 @@
 //  - NOAA data for a specific date never changes: cache first, instant
 //  - "latest" NOAA data: use a copy under 2 hours old instantly and refresh it in the background
 //  - wrecks / depth files shipped with the app: cache first
-const APP = 'breakline-app-v54', DATA = 'breakline-data-v2';
+const APP = 'breakline-app-v55', DATA = 'breakline-data-v2';
 const SHELL = ['app', 'app.html', 'track.js', 'vendor/supabase.js', 'style.css', 'app.js', 'loran.js', 'solunar.js', 'manifest.webmanifest', 'icon.svg',
   'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/d3-array.min.js', 'vendor/d3-contour.min.js',
   'data/wrecks.json', 'data/spots.json', 'data/tide_stations.json', 'data/places.json', 'data/overlays.json', 'data/bathy_2m.json', 'data/bathy_2m.bin', 'data/bathy_fl.json', 'data/bathy_fl.bin', 'data/bathy_cr.json', 'data/bathy_cr.bin'];
@@ -34,12 +34,38 @@ async function erddap(req) {
   catch (e) { return hit || new Response('offline', { status: 504 }); }
 }
 
+// Saved data older than 12 days is pruned once per worker start (dated tiles and charts pile up otherwise)
+let pruned = false;
+async function prune() {
+  if (pruned) return; pruned = true;
+  const c = await caches.open(DATA), cut = Date.now() - 12 * 86400e3;
+  for (const req of await c.keys()) {
+    const r = await c.match(req); if (r && +(r.headers.get('x-bl-saved') || Date.now()) < cut) await c.delete(req);
+  }
+}
+async function cmems(req) {
+  setTimeout(() => prune().catch(() => {}), 20000);
+  const c = await caches.open(DATA), hit = await c.match(req);
+  if (hit) {
+    const age = Date.now() - +(hit.headers.get('x-bl-saved') || 0);
+    if (age < 6 * 3600 * 1000) return hit;
+    fetch(req).then((r) => putData(req, r)).catch(() => {});
+    return hit;
+  }
+  const r = await fetch(req); putData(req, r.clone()); return r;
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // hourly snapshots on GitHub Pages: each file name is unique per chart, so cache first
   if (e.request.method === 'GET' && url.hostname.endsWith('github.io') && url.pathname.endsWith('.png')) {
     e.respondWith(caches.open(DATA).then(async (c) => (await c.match(e.request)) || fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; })));
     return;
+  }
+  // Copernicus map tiles: a dated tile of an observed layer never changes; model layers (forecasts) are re-run daily,
+  // so use a saved copy under 6 hours old instantly and refresh older ones in the background
+  if (e.request.method === 'GET' && url.hostname === 'wmts.marine.copernicus.eu' && /GetTile|GetLegend/i.test(url.search)) {
+    e.respondWith(cmems(e.request)); return;
   }
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   if (url.pathname.startsWith('/erddap/')) { e.respondWith(erddap(e.request)); return; }

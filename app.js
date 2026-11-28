@@ -1605,7 +1605,7 @@ async function overlayNrt(g, p, win) {
 // (clouds and cloud edges read cold): the 2nd-warmest when there are 3+ looks, else the warmest. Same idea as the
 // classic "warmest pixel" composites, minus the single hottest reading so one calm afternoon can't paint a fake warm spot.
 // Chlorophyll: VIIRS NOAA-20/21 + OLCI Sentinel-3A/3B passes, geometric mean of the clear readings.
-const COMP_PARTS = { sst: ['pmday', 'amday', 'pmnight', 'amnight'], chl: ['n21', 'n20', 's3a', 's3b'] };
+const COMP_PARTS = { sst: ['pmday', 'amday', 'pmnight', 'amnight'], chl: ['n21', 's3a', 's3b'] };   // NOAA-20 chl stopped updating Nov 18 2026
 function stackComposite(fam, base, layers) {
   const n = base.nx * base.ny, cnt = new Uint16Array(n), sst = fam === 'sst';
   const a = new Float32Array(n).fill(-Infinity), b = new Float32Array(n).fill(-Infinity), sum = new Float32Array(n);
