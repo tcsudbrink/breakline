@@ -743,7 +743,8 @@ function tempNear(la, lo) {
 function inshoreSpots(sp) {
   const cand = inshoreCandidates(), res = [];
   for (const c of cand) {
-    const t = tempNear(c.lat, c.lon), tf = t === t ? tempFit(t, sp.t) : 0.5;
+    const t = tempNear(c.lat, c.lon), tb = sp.bot && S.data.fx_bot ? sample(S.data.fx_bot, c.lat, c.lon) : NaN;
+    const tf = (t === t ? tempFit(t, sp.t) : 0.5) * (tb === tb ? 0.6 + 0.4 * tempFit(tb, sp.bot) : 1);
     const z = depthAt(c.lat, c.lon), ft = z < 0 ? -z * 3.28084 : NaN;
     let df;
     if (c.kind === 'drop') { const lo = Math.max(c.top, sp.ft[0]), hi = Math.min(c.bot, sp.ft[1]); df = hi > lo ? 1 : 0.35; }
@@ -756,6 +757,7 @@ function inshoreSpots(sp) {
     why.push(`${c.name ? `${c.name} · ` : ''}${INSHORE_LBL[c.kind]}`);
     if (c.kind === 'drop') { if (c.bot - c.top < 3) continue; why.push(`${Math.round(c.top)} → ${Math.round(c.bot)} ft`); } else if (ft === ft) why.push(`${Math.round(ft)} ft`);
     if (t === t) why.push(`${t.toFixed(1)}°F${tf >= 1 ? '' : tf > 0 ? ` (${sp.t[1]}-${sp.t[2]}° is best)` : ' (outside their range)'}`);
+    if (tb === tb) why.push(`${tb.toFixed(0)}°F on the bottom nearby (model)`);
     why.push(INSHORE_WHY[c.kind]);
     res.push({ lat: c.lat, lon: c.lon, score: sc, why, kind: c.kind, name: c.name, ft: c.kind === 'drop' ? c.top : ft });
   }
@@ -1887,6 +1889,37 @@ const SPECIES = {
   tarpon: { label: 'Tarpon', ocean: 'atl', inshore: true, region: 'fl', t: [72, 77, 88, 92], ft: [4, 40], like: { inlet: 1, bridge: 0.9, drop: 0.8, jetty: 0.7, pier: 0.6, shoal: 0.5, reef: 0.4, rock: 0.4 } },
 };
 for (const v of Object.values(SPECIES)) if (v.inshore) { v.fm = 0; v.w = { brk: 0.2, chl: 0.2, bot: 0.6, eddy: 0 }; }
+// Below the surface (Copernicus ocean model + clarity): sub = [depth level (ZLEV), temp window there] for fish that
+// feed down in the water column; bot = bottom-temp window for fish that live on the bottom; clr = visibility (ft) they
+// like at least (pelagics hunt by sight in clean blue water). Fish not listed here skip that part of the score.
+const DEEP = {
+  yellowfin: { sub: [3, [62, 66, 78, 84]], clr: 40 }, bigeye: { sub: [5, [54, 58, 70, 76]], clr: 40 },
+  bluefin: { sub: [3, [46, 52, 64, 70]], clr: 20 }, mahi: { clr: 45 }, white: { sub: [2, [64, 68, 78, 83]], clr: 50 },
+  blue: { sub: [3, [68, 72, 82, 86]], clr: 55 }, sailA: { clr: 40 }, blackfin: { sub: [3, [62, 66, 78, 82]], clr: 40 },
+  wahoo: { sub: [2, [66, 70, 80, 84]], clr: 45 }, dorado: { clr: 45 }, striped: { sub: [2, [62, 66, 76, 80]], clr: 45 },
+  blueP: { sub: [3, [70, 74, 84, 88]], clr: 55 }, black: { sub: [2, [70, 74, 84, 88]], clr: 40 }, sailP: { clr: 40 },
+  spear: { sub: [3, [66, 70, 80, 84]], clr: 55 }, bluefinP: { sub: [3, [52, 56, 66, 70]], clr: 25 },
+  yellowtail: { bot: [54, 58, 68, 72], clr: 20 }, albacore: { sub: [3, [54, 57, 64, 68]], clr: 40 }, sbt: { sub: [3, [50, 54, 64, 68]], clr: 25 },
+};
+for (const [k, v] of Object.entries(SPECIES)) Object.assign(v, DEEP[k] || (v.inshore ? { bot: v.t } : {}));
+// The extra Copernicus layers the picks use. Kept apart from the chart layers so the chart's depth picker doesn't move them.
+const FX = {
+  sub: { cm: 'thetao', res: 0.083, cells: 360, conv: (c) => (c > -3 && c < 40 ? C2F(c) : NaN) },
+  bot: { cm: 'tob', res: 0.083, cells: 360, conv: (c) => (c > -3 && c < 40 ? C2F(c) : NaN) },
+  plk: { cm: 'phyc', res: 0.25, cells: 300, conv: (x) => (x > 0 && x < 100 ? x : NaN) },
+  clr: { cm: 'zsd', res: 0.0417, cells: 420, conv: (m) => (m > 0 && m < 100 ? m * 3.28084 : NaN) },
+};
+// which of them the current species still needs for this view: [[key, depth level]]
+function fxNeeded() {
+  const sp = SPECIES[S.species] || SPECIES.yellowfin, want = [['plk', 0], ['clr', 0]];
+  if (sp.sub) want.push(['sub', sp.sub[0]]); if (sp.bot) want.push(['bot', 0]);
+  return want.filter(([k, lev]) => { const g = S.data[`fx_${k}`], f = FX[k]; return !(covers(g, f.res, f.cells) && (g.lev || 0) === lev); });
+}
+async function loadFx(k, lev) {
+  const f = FX[k], win = windowFor(f.res, f.cells), cs = lev ? { ...CM[f.cm], elev: ZLEV[lev].e } : CM[f.cm];
+  const g = await loadCmems(cs, win, S.date || null);
+  return { ...g, win, lev, v: g.v.map((x) => (x === x ? f.conv(x) : x)) };
+}
 const REGION_OK = { fl: (la, lo) => la < 30.8 && lo > -87.7, north: (la) => la > 34.5, south: (la) => la < 39.8 };
 // Which ocean a point is in. The Central American isthmus divide, roughly, from Mexico to Panama.
 function oceanAt(lat, lon) {
@@ -1939,6 +1972,9 @@ function buildFish() {
   }
   const n = g.nx * g.ny, T = new Float32Array(n).fill(NaN), Td = new Float32Array(n).fill(NaN), hourly = new Uint8Array(n);
   const dep = new Float32Array(n).fill(NaN), lchl = new Float32Array(n).fill(NaN), cur = new Float32Array(n).fill(NaN);
+  const Tsub = new Float32Array(n).fill(NaN), Tbot = new Float32Array(n).fill(NaN), lplk = new Float32Array(n).fill(NaN), clr = new Float32Array(n).fill(NaN);
+  const fxS = sp.sub && S.data.fx_sub && (S.data.fx_sub.lev || 0) === sp.sub[0] ? S.data.fx_sub : null, fxB = sp.bot ? S.data.fx_bot : null;
+  const fxP = S.data.fx_plk, fxC = S.data.fx_clr, subE = sp.sub ? ZLEV[sp.sub[0]].e : 0;
   // Water temp: the hourly GOES reading (newest clear pixel, last 24 h) where it has one, the daily cloud-free map elsewhere
   let nh = 0, nw = 0;
   for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
@@ -1949,8 +1985,12 @@ function buildFish() {
     if (dep[k] < 0) nw++;
     const c = sample(S.data.chl, la, lo); if (c > 0) lchl[k] = Math.log10(c);
     const cu = curAt(la, lo); if (cu) cur[k] = Math.hypot(cu[0], cu[1]) * 1.94384;
+    if (fxS && dep[k] < subE - 5) Tsub[k] = sample(fxS, la, lo);          // only where the water is deeper than that level
+    if (fxB && dep[k] < 0) Tbot[k] = sample(fxB, la, lo);
+    if (fxP) { const x = sample(fxP, la, lo); if (x > 0) lplk[k] = Math.log10(x); }
+    if (fxC) clr[k] = sample(fxC, la, lo);
   }
-  S.fishInfo = { hourlyPct: nw ? Math.round(100 * nh / nw) : 0, hour: S.data.goes?.times?.slice(-1)[0], cur: !!(S.data.curb || S.data.hf) };
+  S.fishInfo = { hourlyPct: nw ? Math.round(100 * nh / nw) : 0, hour: S.data.goes?.times?.slice(-1)[0], cur: !!(S.data.curb || S.data.hf), sub: !!fxS, bot: !!fxB, plk: !!fxP, clr: !!fxC };
   const grad = (vals, perNm) => {
     const out = new Float32Array(n).fill(NaN);
     for (let j = 1; j < g.ny - 1; j++) {
@@ -1973,22 +2013,31 @@ function buildFish() {
   }
   const brk = maxFilter(g, gT, r), chlE = maxFilter(g, grad(lchl), r), bot = maxFilter(g, grad(dep.map((z) => (z < 0 ? -z / FATHOM : NaN))), r);
   const eddy = sshUp ? maxFilter(g, grad(sshUp), r) : null;
-  const nb = pctNorm(brk), nc = pctNorm(chlE), nbo = pctNorm(bot), ne = eddy ? pctNorm(eddy) : 1;
-  const score = new Float32Array(n).fill(NaN), parts = new Float32Array(n * 4);
+  // plankton edges: the model sees under clouds, so it stands in for color where the satellite couldn't see
+  const plkE = fxP ? maxFilter(g, grad(lplk), r) : null;
+  const nb = pctNorm(brk), nc = pctNorm(chlE), nbo = pctNorm(bot), ne = eddy ? pctNorm(eddy) : 1, np = plkE ? pctNorm(plkE) : 1;
+  const score = new Float32Array(n).fill(NaN), parts = new Float32Array(n * 8).fill(NaN);
   const home = PORTS.find((x) => x[0] === S.home);
   for (let k = 0; k < n; k++) {
     if (!(dep[k] < 0) || T[k] !== T[k]) continue;
-    const fm = -dep[k] / FATHOM, tf = tempFit(T[k], sp.t);
-    const pb = Math.min(1, (brk[k] || 0) / nb), pc = Math.min(1, (chlE[k] || 0) / nc), po = Math.min(1, (bot[k] || 0) / nbo), pe = eddy ? Math.min(1, (eddy[k] || 0) / ne) : 0;
+    const fm = -dep[k] / FATHOM, tf0 = tempFit(T[k], sp.t);
+    // the water the fish actually swims in: temp at their feeding depth, or on the bottom for bottom fish
+    const sf = Tsub[k] === Tsub[k] ? tempFit(Tsub[k], sp.sub[1]) : NaN, bf = Tbot[k] === Tbot[k] ? tempFit(Tbot[k], sp.bot) : NaN;
+    const tf = tf0 * (sf === sf ? 0.55 + 0.45 * sf : 1) * (bf === bf ? 0.6 + 0.4 * bf : 1);
+    const pcC = chlE[k] === chlE[k] ? Math.min(1, chlE[k] / nc) : NaN, pp = plkE && plkE[k] === plkE[k] ? Math.min(1, plkE[k] / np) : 0;
+    const pb = Math.min(1, (brk[k] || 0) / nb), pc = pcC === pcC ? Math.max(pcC, 0.6 * pp) : pp, po = Math.min(1, (bot[k] || 0) / nbo), pe = eddy ? Math.min(1, (eddy[k] || 0) / ne) : 0;
     const struct = sp.w.brk * pb + sp.w.chl * pc + sp.w.bot * po + sp.w.eddy * pe;
     let s = 100 * tf * (0.3 + 0.7 * struct);
-    if (sp.inshore) { const ftd = fm * 6; if (ftd < sp.ft[0] || ftd > sp.ft[1] * 1.5) s *= 0.3; score[k] = s; parts.set([pb, pc, po, pe], k * 4); continue; }
+    const cf = sp.clr && clr[k] === clr[k] ? Math.min(1, clr[k] / sp.clr) : NaN;
+    if (cf === cf) s *= 0.75 + 0.25 * cf;                     // murky water costs pelagics up to a quarter of the score
+    parts.set([pb, pc, po, pe, sf, bf, cf, pp], k * 8);
+    if (sp.inshore) { const ftd = fm * 6; if (ftd < sp.ft[0] || ftd > sp.ft[1] * 1.5) s *= 0.3; score[k] = s; continue; }
     if (fm < sp.fm) s *= 0.25;
     // Strong current is hard to fish (lines blow out, drift too fast): full credit to 1.2 kt, tapering hard after that.
     // Edges of the Stream still score; the middle of it doesn't.
     const kt = cur[k];
     if (kt === kt) s *= kt <= 1.2 ? 1 : kt <= 2.5 ? 1 - 0.85 * (kt - 1.2) / 1.3 : 0.05;
-    score[k] = s; parts.set([pb, pc, po, pe], k * 4);
+    score[k] = s;
   }
   // top spots: best cells at least 8 nm apart, within the run limit from the home inlet
   const order = Array.from(score.keys()).filter((k) => score[k] > 25).sort((a, b) => score[b] - score[a]);
@@ -2000,17 +2049,23 @@ function buildFish() {
     if (cur[k] > 2.0) continue;                               // never send you into the middle of the Stream
     const fmK = -dep[k] / FATHOM, [dMin, dMax] = S.fishDepth;  // your depth range, if set
     if ((dMin != null && fmK < dMin) || (dMax != null && fmK > dMax)) continue;
-    const [pb, pc, po, pe] = parts.subarray(k * 4, k * 4 + 4);
+    const [pb, pc, po, pe, sf, bf, cf, pp] = parts.subarray(k * 8, k * 8 + 8);
     const why = [`${T[k].toFixed(1)}°F${hourly[k] ? '' : ' (daily)'}`];
+    if (sf === sf) why.push(`${Tsub[k].toFixed(0)}°F at ${ZLEV[sp.sub[0]].l.replace('~', '')}`);
+    if (bf === bf) why.push(`${Tbot[k].toFixed(0)}°F on the bottom`);
     if (cur[k] === cur[k]) why.push(`${cur[k].toFixed(1)} kt current`);
-    if (pb > 0.6) why.push('on a temp break'); if (pc > 0.6) why.push('color edge'); if (po > 0.6) why.push('steep bottom / canyon wall'); if (pe > 0.6) why.push('eddy edge');
+    if (pb > 0.6) why.push('on a temp break'); if (pc > 0.6) why.push(pp > 0.6 && !(lchl[k] === lchl[k]) ? 'plankton edge' : 'color edge'); if (po > 0.6) why.push('steep bottom / canyon wall'); if (pe > 0.6) why.push('eddy edge');
+    if (clr[k] === clr[k]) why.push(`${Math.round(clr[k])} ft visibility`);
     why.push(`${Math.round(-dep[k] / FATHOM).toLocaleString()} fm`);
-    spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why, d: { T: T[k], tf: tempFit(T[k], sp.t), ok: [sp.t[1], sp.t[2]], hourly: !!hourly[k], kt: cur[k], fm: -dep[k] / FATHOM, pb, pc, po, pe } });
+    spots.push({ lat: la, lon: lo, score: Math.round(score[k]), why, d: { T: T[k], tf: tempFit(T[k], sp.t), ok: [sp.t[1], sp.t[2]], hourly: !!hourly[k], kt: cur[k], fm: -dep[k] / FATHOM, pb, pc, po, pe,
+      sub: sf === sf ? { T: Tsub[k], fit: sf, at: ZLEV[sp.sub[0]].l, ok: [sp.sub[1][1], sp.sub[1][2]] } : null, bot: bf === bf ? { T: Tbot[k], fit: bf, ok: [sp.bot[1], sp.bot[2]] } : null,
+      vis: clr[k] === clr[k] ? clr[k] : NaN, visOk: sp.clr, pp, plkOnly: pp > 0.6 && !(lchl[k] === lchl[k]) } });
     if (spots.length >= 8) break;
   }
   S.data.fish = { ...g, v: score, date: (S.data.goes?.date || sst.date), times: S.data.goes?.times?.slice(-1) };
   S.fishT = { ...g, v: T, mask: hourly, date: S.data.fish.date, times: S.data.fish.times };
   S.fishCur = { ...g, v: cur };
+  S.fishX = { ...g, sub: fxS ? Tsub : null, bot: fxB ? Tbot : null, plk: fxP ? lplk : null, clr: fxC ? clr : null, dep, sp };
   S.fishSpots = sp.inshore ? inshoreSpots(sp) : spots;
   renderSpots();
 }
@@ -2272,6 +2327,24 @@ function buildAnalysis() {
     A.cur = mx;
     if (mx && mx.v > 1.6) A.curLines = contourAt(cu, 1.5);
   }
+  // below the surface, clarity and plankton (Copernicus), over what's on screen
+  const X = S.fishX; A.deep = null;
+  if (X) {
+    const sub = [], bot = [], vis = []; let subNear = null, plkHi = null; const spX = X.sp;
+    for (let j = 0; j < X.ny; j += 2) for (let i = 0; i < X.nx; i += 2) {
+      const k = j * X.nx + i, la = X.lat0 + j * X.dlat, lo = X.lon0 + i * X.dlon; if (!inView(la, lo)) continue;
+      if (X.sub && X.sub[k] === X.sub[k]) {
+        sub.push(X.sub[k]);
+        if (home && X.sub[k] >= spX.sub[1][1] && X.sub[k] <= spX.sub[1][2]) { const [d, b] = run(la, lo); if (!subNear || d < subNear.d) subNear = { d, b, lat: la, lon: lo }; }
+      }
+      if (X.bot && X.bot[k] === X.bot[k] && X.dep[k] > -100) bot.push(X.bot[k]);   // the shelf, where bottom fish are
+      if (X.clr && X.clr[k] === X.clr[k] && X.dep[k] < -20) vis.push(X.clr[k]);
+      if (X.plk && X.plk[k] === X.plk[k] && X.dep[k] < -90 && (!home || run(la, lo)[0] <= S.maxRun) && (!plkHi || X.plk[k] > plkHi.v)) plkHi = { v: X.plk[k], lat: la, lon: lo };
+    }
+    const rng = (a) => { if (a.length < 20) return null; a.sort((x, y) => x - y); return { lo: a[Math.floor(a.length * 0.05)], hi: a[Math.floor(a.length * 0.95)] }; };
+    A.deep = { sub: rng(sub), subNear, at: spX.sub ? ZLEV[spX.sub[0]].l : '', subOk: spX.sub?.[1], bot: rng(bot), botOk: spX.bot,
+      vis: rng(vis.slice()), clean: spX.clr && vis.length ? vis.filter((v) => v >= spX.clr).length / vis.length : null, clr: spX.clr, plkHi };
+  }
   A.asOf = S.date ? nice(S.date) : S.fishInfo?.hour ? niceHour(S.fishInfo.hour) : (T.date ? nice(T.date) : 'latest');
   ANA = A;
 }
@@ -2324,6 +2397,14 @@ function renderAnalysis() {
   if (A.chl) big.push(A.chl.blue ? `Blue water (under ${A.chl.lvl.toFixed(2)} mg/m³ chlorophyll) is ${Math.round(A.chl.blueFrac * 100)}% of the chart; the nearest is ${A.chl.blue.d.toFixed(0)} nm @ ${Math.round(A.chl.blue.b)}°T.` : `Color is mostly green inshore of the chart edge; no clean blue water in view.`);
   if (A.cur) big.push(`Strongest current on screen is ${A.cur.v.toFixed(1)} kt${A.cur.dir === A.cur.dir ? ` setting ${card(A.cur.dir)}` : ''}${A.cur.v > 1.6 ? ' (the pink dotted line is the 1.5 kt edge: fish along it, not in it)' : ''}.`);
   h.push(`<h4>The water</h4><p>${big.join(' ')}</p>`);
+  // Below the surface
+  const D = A.deep, deep = [];
+  if (D?.sub) deep.push(`At ${D.at} the water runs ${f1(D.sub.lo)} to ${f1(D.sub.hi)}°F; ${A.sp.label.toLowerCase()} want ${D.subOk[1]}-${D.subOk[2]}°F down there${D.subNear ? `, and the closest of it is ${D.subNear.d.toFixed(0)} nm @ ${Math.round(D.subNear.b)}°T from ${port}` : ', and none of it is on screen'}.`);
+  if (D?.bot) deep.push(`On the shelf, bottom water runs ${f1(D.bot.lo)} to ${f1(D.bot.hi)}°F (${A.sp.label.toLowerCase()} like ${D.botOk[1]}-${D.botOk[2]}°F).`);
+  if (D?.vis) deep.push(`Visibility runs about ${Math.round(D.vis.lo)} to ${Math.round(D.vis.hi)} ft${D.clean != null ? `; ${Math.round(D.clean * 100)}% of the offshore water is ${D.clr}+ ft clean, the way ${A.sp.label.toLowerCase()} like it` : ''}.`);
+  if (D?.plkHi) deep.push(`Out past 50 fm and inside your ${S.maxRun} nm run, plankton (the food chain's base, from the ocean model, so clouds don't hide it) is richest ${where(D.plkHi.lat, D.plkHi.lon)}; bait gathers where it meets clean water.`);
+  if (deep.length) h.push(`<h4>Below the surface</h4><p>${deep.join(' ')}</p><p class="hint">From the Copernicus ocean model (about 9 km) and satellite clarity. The picks use them too.</p>`);
+  else h.push(`<h4>Below the surface</h4><p class="hint">Loading temp at depth, plankton and clarity…</p>`);
   // Breaks
   if (A.breaks.length) {
     h.push(`<h4>Temperature breaks</h4><ul>${A.breaks.map((b) => `<li data-ll="${b.lat},${b.lon}"><b>${b.id}</b> ${b.tc === b.tc ? `${f1(b.tc)}→${f1(b.tw)}°F, warm side to the ${b.warmSide}` : ''}, ${b.str.toFixed(1)}°F/nm, about ${b.len.toFixed(0)} nm long${b.fm === b.fm ? `, ${Math.round(b.fm).toLocaleString()} fm` : ''}.<br><small>${where(b.lat, b.lon)} · ${pos(b.lat, b.lon)}</small></li>`).join('')}</ul>`);
@@ -2811,6 +2892,7 @@ async function refresh() {
     if (needCur && Date.now() > hfCool && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) soft(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; hfCool = Date.now() + 5 * 60e3; }));
     if (S.prod === 'wx') add('weather', loadWx().then(() => buildWx()));
     if (fishy) {
+      for (const [k, lev] of fxNeeded()) soft(loadFx(k, lev).then((g) => { S.data[`fx_${k}`] = g; }).catch((e) => console.warn(`${k} for the picks`, e)));
       if (!covers(S.data.sst, PRODUCTS.sst.res, PRODUCTS.sst.cells) || S.data.sst?.src !== S.src.sst) add('water temp', fast('sst', loadGrid('sst'), savedCopy('sst')));
       if (!covers(S.data.chl, PRODUCTS.chl.res, PRODUCTS.chl.cells) || S.data.chl?.src !== S.src.chl) jobs.push(fast('chl', loadGrid('chl'), savedCopy('chl')).catch(() => {}));
     } else if (S.prod !== 'sst' && !S.data.sst) jobs.push(loadGrid('sst').then((g) => { S.data.sst = g; }).catch(() => {}));
@@ -2889,7 +2971,7 @@ function updateDate() {
   }
   $('dNext').title = canFc ? 'Forecast: step ahead 6 hours' : 'Next';
 }
-function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'o2', 'tdep', 'tbot', 'phyc', 'zsd', 'fish', 'ana']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
+function invalidateTimeData() { for (const k of ['sst', 'goes', 'chl', 'ssh', 'mld', 'cur', 'curb', 'hf', 'hf1', 'cur6', 'ftle', 'sss', 'o2', 'tdep', 'tbot', 'phyc', 'zsd', 'fish', 'ana', 'fx_sub', 'fx_bot', 'fx_plk', 'fx_clr']) delete S.data[k]; S.geo.iso = []; S.geo.breaks = []; }
 
 // ---------- Chart picker: thumbnails of every source x day for the current view ----------
 const PK = { fam: 'sst', items: [], token: 0 };
@@ -3172,6 +3254,7 @@ map.on('moveend', () => { if (fillSpecies() && (S.prod === 'fish' || S.prod === 
 spSel.onchange = () => {
   S.species = spSel.value; store.set('species', S.species); store.set(`species_${spOcean}`, S.species); syncAnaSpecies(); queueHiDem();
   buildFish(); if (S.prod === 'ana') { buildAnalysis(); renderAnalysis(); } autoRange(true); renderRaster(); drawLegend(); chart.draw();
+  if ((S.prod === 'fish' || S.prod === 'ana') && fxNeeded().length) refresh();
 };
 syncAnaSpecies();
 $('anaSpecies').onchange = () => { spSel.value = $('anaSpecies').value; spSel.onchange(); };
@@ -4417,9 +4500,13 @@ function hotWhy(s, i) {
     if (!d.hourly) pts.push('Clouds hid the hourly satellite here, so that temp is from the daily blend: check it when you get there.');
     if (d.pb > 0.6) { pts.push('<b>On a temperature break:</b> the water changes fast within a couple of miles. Bait piles up on breaks and predators patrol them.'); tips.push('Troll along the break, warm side first, and watch for birds, bait and weed.'); }
     else if (d.pb > 0.3) pts.push('A weaker temp break runs close by.');
-    if (d.pc > 0.6) { pts.push('<b>On a color edge:</b> blue water meets greener, food-rich water here.'); tips.push('Work the line where blue meets green.'); }
+    if (d.pc > 0.6 && !d.plkOnly) { pts.push('<b>On a color edge:</b> blue water meets greener, food-rich water here.'); tips.push('Work the line where blue meets green.'); }
     if (d.po > 0.6) { pts.push('<b>Steep bottom:</b> a canyon wall, ledge or the shelf edge pushes current and bait up.'); tips.push('Start on the up-current side of the drop.'); }
     if (d.pe > 0.6) { pts.push('<b>On an eddy edge:</b> current runs here and warm and cool water meet.'); tips.push('Fish the edge of the eddy, not the middle.'); }
+    if (d.sub) pts.push(d.sub.fit >= 1 ? `<b>${d.sub.T.toFixed(0)}°F at ${d.sub.at}</b>, where ${nm} feed: right in their range there (${d.sub.ok[0]}-${d.sub.ok[1]}°F).` : `<b>${d.sub.T.toFixed(0)}°F at ${d.sub.at}</b>, where ${nm} feed: ${d.sub.fit > 0 ? 'a little outside' : 'outside'} their range there (${d.sub.ok[0]}-${d.sub.ok[1]}°F), so the score is trimmed.`);
+    if (d.bot) pts.push(`<b>${d.bot.T.toFixed(0)}°F on the bottom</b> (${d.bot.fit >= 1 ? 'in' : 'outside'} their ${d.bot.ok[0]}-${d.bot.ok[1]}°F range).`);
+    if (d.vis === d.vis && d.visOk) pts.push(d.vis >= d.visOk ? `About <b>${Math.round(d.vis)} ft of visibility</b>: clean water ${nm} hunt in.` : `Only about <b>${Math.round(d.vis)} ft of visibility</b>; ${nm} like ${d.visOk}+ ft, so the score is trimmed a little.`);
+    if (d.plkOnly) pts.push('<b>Plankton edge:</b> clouds hid the satellite color here, but the ocean model shows a food edge.');
     if (d.kt === d.kt) pts.push(d.kt <= 1.2 ? `${d.kt.toFixed(1)} kt of current: easy to fish.` : `${d.kt.toFixed(1)} kt of current: strong, so expect a fast drift.`);
     pts.push(`${Math.round(d.fm).toLocaleString()} fm of water.`);
     const W = { brk: 'temp breaks', chl: 'color edges', bot: 'steep bottom', eddy: 'eddy edges' }, top = Object.entries(spc?.w || {}).sort((a, b) => b[1] - a[1])[0];
