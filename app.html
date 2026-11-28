@@ -68,7 +68,13 @@
 <!-- Date strip -->
 <div id="topLeft">
   <select id="zone" aria-label="Jump to a fishing zone"><option value="">Jump to…</option></select>
-  <select id="homeTop" aria-label="Home port" title="Home port: range, bearing and the run limit are measured from here"></select>
+  <button id="homeTop" type="button" aria-haspopup="dialog" title="Home port: range, bearing and the run limit are measured from here. Tap to search."></button>
+  <div id="homePick" hidden>
+    <input id="hpSearch" type="search" placeholder="Search ports, towns, areas" autocomplete="off" aria-label="Search home ports">
+    <button id="hpNear" type="button" class="hp-near">Nearest port to me</button>
+    <div id="hpList"></div>
+    <label class="hp-auto"><input type="checkbox" id="hpAuto"> Switch home port when I move to another area</label>
+  </div>
 </div>
 
 <div id="datebar">
@@ -164,6 +170,8 @@
     <label class="btnlike ghost">Import GPX<input id="wGpxIn" type="file" accept=".gpx,application/gpx+xml" hidden></label>
     <button id="wClear" class="ghost">Clear all</button>
   </div>
+  <h3>Routes <span id="rCount"></span></h3>
+  <ol id="rList"></ol>
   <h3>Crew</h3>
   <p id="crewSignin" class="hint">Sign in to share spots and boat positions with the people you fish with.</p>
   <div id="crewBox" hidden>
@@ -265,8 +273,24 @@
 <!-- Measure bar -->
 <div id="measureBar" hidden>
   <span id="measureTxt">Tap the chart to drop points</span>
-  <button id="measureUndo" class="ghost">Undo</button><button id="measureClear" class="ghost">Clear</button><button id="measureDone">Done</button>
+  <span class="rt-boat"><input id="rtKts" type="number" min="3" max="80" step="1" inputmode="decimal" aria-label="Cruise speed, knots"> kt
+    <input id="rtGph" type="number" min="0" max="400" step="1" inputmode="decimal" placeholder="?" aria-label="Fuel burn, gallons per hour"> gal/h</span>
+  <button id="rtHome" class="ghost" title="Start the route at your home port">From home</button>
+  <button id="measureUndo" class="ghost">Undo</button><button id="measureClear" class="ghost">Clear</button>
+  <button id="rtSave" class="ghost">Save</button><button id="rtGo" title="Navigate this route with your GPS">Go</button><button id="measureDone">Done</button>
 </div>
+
+<!-- Navigate (go to a spot or run a route) -->
+<section id="navPanel" hidden aria-live="polite">
+  <div class="nv-top"><span id="nvTo"></span><button id="nvClose" class="x" aria-label="Stop navigating">&times;</button></div>
+  <div class="nv-big">
+    <div><small>To go</small><b id="nvDtw">&ndash;</b></div>
+    <div><small>Steer</small><b id="nvBrg">&ndash;</b></div>
+    <div><small>ETA</small><b id="nvEta">&ndash;</b></div>
+  </div>
+  <div id="nvSub" class="nv-sub"></div>
+  <div class="nv-btns"><button id="nvPrev" class="ghost">&#9664; Prev</button><button id="nvNext" class="ghost">Next &#9654;</button><button id="nvMob" class="mob">MOB</button></div>
+</section>
 
 <!-- Location blocked help -->
 <section id="locHelp" class="panel" hidden>

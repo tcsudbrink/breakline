@@ -249,7 +249,7 @@ const store = {
   set: (k, v) => { localStorage.setItem('breakline.' + k, JSON.stringify(v)); if (SYNC_KEYS.includes(k)) ACCT_HOOK.settings?.(); },
 };
 // Settings saved to the signed-in account (everything else stays on this device)
-const SYNC_KEYS = ['home', 'grid', 'tdPair', 'tdOff', 'species', 'maxRun', 'fishDepth', 'fw'];
+const SYNC_KEYS = ['home', 'grid', 'tdPair', 'tdOff', 'species', 'maxRun', 'fishDepth', 'fw', 'zoneHome', 'routes', 'boat'];
 const ACCT_HOOK = {};
 const S = {
   prod: store.get('prod', 'sst'),
@@ -3440,26 +3440,98 @@ const homeChanged = () => {
   if (S.prod === 'ana') { buildFish(); buildAnalysis(); renderAnalysis(); }
   chart.draw();
 };
+// ---------- Home port: searchable, and one per area (Ocean City when you're on the Mid-Atlantic, Palm Beach in Florida) ----------
+const hesc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ht = $('homeTop');
-PORTS.forEach(([n]) => { const o = document.createElement('option'); o.value = n; o.textContent = `Home: ${n}`; ht.appendChild(o); });
-ht.value = S.home;
-// Each Jump-to zone remembers the home port you last picked inside it
+function paintHome() {
+  ht.innerHTML = `<svg class="hp-ico" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><circle cx="12" cy="4.5" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 6.7V21M7.5 10h9M4.5 14a7.5 7.5 0 0 0 15 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="hp-name">${hesc(S.home)}</span><span class="hp-car">&#9662;</span>`;
+  ht.setAttribute('aria-label', `Home port: ${S.home}. Tap to change.`);
+}
+paintHome();
+// Each area (the Jump-to zones) remembers the home port you last picked inside it
 const zoneHome = store.get('zoneHome', {});
+const zoneArea = (k) => { const [[s, w], [n, e]] = ZONES[k].view; return (n - s) * (e - w); };
+const inZoneView = (k, la, lo, pad) => { const [[s, w], [n, e]] = ZONES[k].view; return la >= s - pad && la <= n + pad && lo >= w - pad && lo <= e + pad; };
+const zonesAt = (la, lo, pad = 0.3) => Object.keys(ZONES).filter((k) => inZoneView(k, la, lo, pad)).sort((a, b) => zoneArea(a) - zoneArea(b));
+const zoneName = (k) => ZONES[k].label.split(':')[0];
+const portRow = (n) => PORTS.find((x) => x[0] === n);
 function rememberHome() {
-  const p = PORTS.find((x) => x[0] === S.home); if (!p) return;
-  const inZone = (k) => { const [[s, w], [n, e]] = ZONES[k].view; return p[1] >= s - 1 && p[1] <= n + 1 && p[2] >= w - 1 && p[2] <= e + 1; };
-  // the zone you last jumped to, if this port is in it; otherwise the zone whose middle is closest to the port
-  let k = store.get('lastZone', null);
-  if (!k || !ZONES[k] || !inZone(k)) {
-    k = Object.keys(ZONES).sort((a, b) => {
-      const d = (z) => { const [[s, w], [n, e]] = ZONES[z].view; return Math.hypot((s + n) / 2 - p[1], (w + e) / 2 - p[2]); };
-      return d(a) - d(b);
-    })[0];
-  }
+  const p = portRow(S.home); if (!p) return;
+  const ks = zonesAt(p[1], p[2], 1), c = map.getCenter(), here = zonesAt(c.lat, c.lng).filter((k) => ks.includes(k)), last = store.get('lastZone', null);
+  // the area on screen if the port is in it, else the area you last jumped to, else the smallest area holding the port
+  let k = here[0] || (ks.includes(last) ? last : ks[0]);
+  if (!k) k = Object.keys(ZONES).sort((a, b) => {
+    const d = (z) => { const [[s, w], [n, e]] = ZONES[z].view; return Math.hypot((s + n) / 2 - p[1], (w + e) / 2 - p[2]); };
+    return d(a) - d(b);
+  })[0];
   zoneHome[k] = S.home; store.set('zoneHome', zoneHome);
 }
-hp.onchange = () => { S.home = hp.value; ht.value = S.home; store.set('home', S.home); rememberHome(); homeChanged(); };
-ht.onchange = () => { S.home = ht.value; hp.value = S.home; store.set('home', S.home); rememberHome(); fillSpecies(); homeChanged(); };
+function setHome(name, { remember = true, fly = false } = {}) {
+  const p = portRow(name); if (!p) return;
+  const changed = name !== S.home;
+  S.home = name; hp.value = name; store.set('home', name); paintHome();
+  if (remember) rememberHome();
+  if (changed) homeChanged();
+  if (fly && !map.getBounds().contains([p[1], p[2]])) map.setView([p[1], p[2]], Math.max(map.getZoom(), 8));
+}
+hp.onchange = () => setHome(hp.value);
+
+// The picker: search every port by name or area; with no search, your home ports and the ones near the chart
+const hpBox = $('homePick'), hpQ = $('hpSearch'), hpL = $('hpList');
+const fold = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const zMid = (k, la, lo) => { const [[s, w], [n, e]] = ZONES[k].view; return Math.hypot((s + n) / 2 - la, (w + e) / 2 - lo); };
+const portZone = (p) => { const by = (ks) => ks.sort((a, b) => zMid(a, p[1], p[2]) - zMid(b, p[1], p[2]))[0]; const k = by(zonesAt(p[1], p[2], 0.15)) || by(zonesAt(p[1], p[2], 1)); return k ? zoneName(k) : ''; };
+function hpRender() {
+  const q = fold(hpQ.value.trim()), c = map.getCenter(), dist = (p) => rangeBearing([c.lat, c.lng], [p[1], p[2]])[0];
+  const nm = (p) => { const d = dist(p); return d < 1 ? 'on the chart' : `${Math.round(d).toLocaleString()} nm away`; };
+  const row = (p, sub) => `<button type="button" class="hp-row${p[0] === S.home ? ' on' : ''}" data-p="${hesc(p[0])}"><b>${hesc(p[0])}</b><small>${sub}</small></button>`;
+  if (q) {
+    const hits = PORTS.filter((p) => fold(p[0]).includes(q) || fold(portZone(p)).includes(q))
+      .sort((a, b) => (fold(b[0]).startsWith(q) - fold(a[0]).startsWith(q)) || dist(a) - dist(b)).slice(0, 40);
+    hpL.innerHTML = hits.length ? hits.map((p) => row(p, `${hesc(portZone(p))} · ${nm(p)}`)).join('') : '<p class="hint">No port by that name. Try the town, the inlet or the area.</p>';
+    return;
+  }
+  const seen = new Set(), mine = Object.entries(zoneHome).filter(([k, n]) => ZONES[k] && portRow(n) && !seen.has(n) && seen.add(n));
+  const near = PORTS.slice().sort((a, b) => dist(a) - dist(b)).slice(0, 8);
+  hpL.innerHTML = (mine.length ? `<h4>Your home ports</h4>${mine.map(([k, n]) => row(portRow(n), `Home for ${hesc(zoneName(k))}`)).join('')}` : '')
+    + `<h4>Near the chart</h4>${near.map((p) => row(p, `${hesc(portZone(p))} · ${nm(p)}`)).join('')}`;
+}
+function hpOpen(open) {
+  hpBox.hidden = !open; if (!open) return;
+  hpQ.value = ''; $('hpAuto').checked = store.get('homeAuto', true); hpRender();
+  if (!matchMedia('(hover: none)').matches) setTimeout(() => hpQ.focus(), 0);
+}
+ht.onclick = (e) => { e.stopPropagation(); hpOpen(hpBox.hidden); };
+hpQ.oninput = hpRender;
+hpQ.onkeydown = (e) => { if (e.key === 'Enter') hpL.querySelector('.hp-row')?.click(); if (e.key === 'Escape') hpOpen(false); };
+hpL.onclick = (e) => { const b = e.target.closest('.hp-row'); if (!b) return; hpOpen(false); setHome(b.dataset.p, { fly: true }); };
+$('hpAuto').onchange = (e) => store.set('homeAuto', e.target.checked);
+$('hpNear').onclick = () => {
+  const pick = (la, lo) => { const best = PORTS.slice().sort((a, b) => rangeBearing([la, lo], [a[1], a[2]])[0] - rangeBearing([la, lo], [b[1], b[2]])[0])[0]; hpOpen(false); setHome(best[0], { fly: true }); };
+  if (ME.pos) { pick(ME.pos[0], ME.pos[1]); return; }
+  if (!navigator.geolocation) { status('This device has no location service.', true); return; }
+  $('hpNear').textContent = 'Finding you…';
+  navigator.geolocation.getCurrentPosition((p) => { $('hpNear').textContent = 'Nearest port to me'; pick(p.coords.latitude, p.coords.longitude); },
+    () => { $('hpNear').textContent = 'Nearest port to me'; status('Can\'t get your location right now.', true); }, { timeout: 15000, maximumAge: 600000, enableHighAccuracy: false });
+};
+document.addEventListener('pointerdown', (e) => { if (!hpBox.hidden && !hpBox.contains(e.target) && !ht.contains(e.target)) hpOpen(false); });
+
+// Move the chart to another area and the home port follows: your port there if you've picked one, else the area's usual port
+let homeAutoT;
+map.on('moveend', () => { clearTimeout(homeAutoT); homeAutoT = setTimeout(autoHome, 700); });
+setTimeout(autoHome, 1200);   // also on opening the app where you left the chart
+function autoHome() {
+  if (!store.get('homeAuto', true) || NAV.on) return;
+  const b = map.getBounds(); if (b.getEast() - b.getWest() > 14) return;          // zoomed out to a whole coast: leave it alone
+  const c = map.getCenter(), ks = zonesAt(c.lat, c.lng); if (!ks.length) return;
+  const p = portRow(S.home);
+  if (p && (ks.some((k) => inZoneView(k, p[1], p[2], 1.5)) || b.pad(0.25).contains([p[1], p[2]]))) return;   // home is in this area
+  const k = ks.find((z) => portRow(zoneHome[z])) || ks[0], saved = portRow(zoneHome[k]), name = saved ? saved[0] : ZONES[k].home;
+  if (!portRow(name) || name === S.home) return;
+  setHome(name, { remember: false });
+  const msg = `Home port: ${name}, ${saved ? 'your' : 'the usual'} port for ${zoneName(k)}. Tap it to change.`;
+  status(msg); setTimeout(() => { if ($('status').textContent === msg) status(''); }, 6000);
+}
 
 // Zone switcher: jump the view and set that zone's home port (for range/bearing and the hot-spot run limit)
 const zs = $('zone');
@@ -3474,8 +3546,8 @@ for (const [label, keys] of ZONE_GROUPS) {
 }
 zs.onchange = () => {
   const z = ZONES[zs.value]; if (!z) return;
-  S.home = zoneHome[zs.value] && PORTS.some((x) => x[0] === zoneHome[zs.value]) ? zoneHome[zs.value] : z.home; store.set('home', S.home); hp.value = S.home; ht.value = S.home; fillSpecies();
-  store.set('lastZone', zs.value); homeChanged();
+  store.set('lastZone', zs.value);
+  setHome(portRow(zoneHome[zs.value]) ? zoneHome[zs.value] : z.home, { remember: false });
   map.fitBounds(z.view); zs.value = '';
 };
 
@@ -3658,7 +3730,23 @@ const LocateCtl = L.Control.extend({
   },
 });
 new LocateCtl().addTo(map);
-function paintLocate() { if (!ME.btn) return; ME.btn.classList.toggle('on', ME.watch != null); ME.btn.classList.toggle('follow', ME.follow); ME.btn.title = ME.watch == null ? 'Show my location' : ME.follow ? 'Stop tracking' : 'Center on me'; }
+// Man overboard: one tap marks where you are and steers you back (shows while your location is on)
+const MobCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const b = L.DomUtil.create('button', 'locate-btn mob-btn'); b.textContent = 'MOB'; b.hidden = true;
+    b.title = 'Man overboard: mark this position and steer back to it'; b.setAttribute('aria-label', 'Man overboard');
+    L.DomEvent.disableClickPropagation(b); b.onclick = () => mob(); ME.mob = b; return b;
+  },
+});
+new MobCtl().addTo(map);
+function destPoint(a, brg, nm) {
+  const R = 3440.065, r = Math.PI / 180, d = nm / R, t = brg * r, p1 = a[0] * r, l1 = a[1] * r;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(t));
+  const l2 = l1 + Math.atan2(Math.sin(t) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+  return [p2 / r, ((l2 / r + 540) % 360) - 180];
+}
+function paintLocate() { if (ME.mob) ME.mob.hidden = ME.watch == null; if (!ME.btn) return; ME.btn.classList.toggle('on', ME.watch != null); ME.btn.classList.toggle('follow', ME.follow); ME.btn.title = ME.watch == null ? 'Show my location' : ME.follow ? 'Stop tracking' : 'Center on me'; }
 function startLocate() {
   if (!navigator.geolocation) { status('This device has no location service.', true); return; }
   ME.follow = true; status('Finding your location…');
@@ -3689,18 +3777,33 @@ $('locClose').onclick = () => { $('locHelp').hidden = true; };
 $('locRetry').onclick = () => { $('locHelp').hidden = true; startLocate(); paintLocate(); };
 function stopLocate() {
   if (ME.watch != null) navigator.geolocation.clearWatch(ME.watch);
-  ME.watch = null; ME.follow = false; ME.pos = null; ME.layer.clearLayers(); ME.dot = ME.ring = null; paintLocate();
+  ME.watch = null; ME.follow = false; ME.pos = null; ME.prev = null; ME.layer.clearLayers(); ME.dot = ME.ring = ME.vec = null; paintLocate(); navUpdate();
 }
 function onFix(p) {
   const { latitude: la, longitude: lo, accuracy, heading, speed } = p.coords, first = !ME.pos;
   ME.pos = [la, lo]; ME.speed = speed; ME.heading = heading;
+  { // some phones leave speed/heading empty: work them out from the last fix
+    const now = p.timestamp || Date.now(), pr = ME.prev;
+    if (pr && now - pr.t > 2000) {
+      const [d, b] = rangeBearing(pr.pos, ME.pos), kt = d / ((now - pr.t) / 3600e3);
+      if (ME.speed == null) ME.speed = kt / 1.94384;
+      if (ME.heading == null && kt > 1) ME.heading = b;
+    }
+    if (!pr || now - pr.t > 2000) ME.prev = { pos: ME.pos, t: now };
+  }
   if (!ME.dot) {
     ME.ring = L.circle(ME.pos, { radius: accuracy, color: '#35c2ff', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(ME.layer);
     ME.dot = L.marker(ME.pos, { icon: L.divIcon({ className: '', html: '<div class="me-tri"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 1.5 21 22 12 17 3 22Z"/></svg></div>', iconSize: [26, 26], iconAnchor: [13, 13] }), interactive: false, zIndexOffset: 1000 }).addTo(ME.layer);
   } else { ME.dot.setLatLng(ME.pos); ME.ring.setLatLng(ME.pos).setRadius(accuracy); }
   // boat-style triangle: points along your course when moving, north when stopped
-  const tri = ME.dot.getElement()?.querySelector('.me-tri'), moving = heading != null && speed > 0.5;
-  if (tri) { tri.style.transform = `rotate(${moving ? heading : 0}deg)`; tri.classList.toggle('moving', moving); }
+  const tri = ME.dot.getElement()?.querySelector('.me-tri'), moving = ME.heading != null && ME.speed > 0.5;
+  if (tri) { tri.style.transform = `rotate(${moving ? ME.heading : 0}deg)`; tri.classList.toggle('moving', moving); }
+  // where you'll be in 10 minutes on this course and speed
+  if (moving) {
+    const end = destPoint(ME.pos, ME.heading, ME.speed * 1.94384 / 6);
+    if (ME.vec) ME.vec.setLatLngs([ME.pos, end]); else ME.vec = L.polyline([ME.pos, end], { color: '#ff8c1a', weight: 2.5, dashArray: '2 6', interactive: false }).addTo(ME.layer);
+  } else if (ME.vec) { ME.layer.removeLayer(ME.vec); ME.vec = null; }
+  navUpdate();
   if (ME.follow) map.setView(ME.pos, first ? Math.max(map.getZoom(), 9) : map.getZoom(), { animate: !first });
   if (first) status('');
   paintLocate();
@@ -3734,7 +3837,7 @@ function openReading(latlng, title, pick) {
   const el = document.createElement('div'); el.className = 'pp';
   el.innerHTML = `<div class="coord">${title ? `${title}<br>` : ''}${fmtLL(lat, lng)}</div>${pick ? `<div class="pp-why">${pick.html}</div>` : ''}<table></table>
     <div class="save"><input class="ppName" placeholder="Spot name" value="${esc(pick ? pick.name : `Spot ${S.wpts.length + 1}`)}"><button class="ppSave">${pick ? 'Save as spot' : 'Save'}</button></div>
-    <div class="pp-btns"><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><button class="ppMatch">Find this water again</button><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
+    <div class="pp-btns"><button class="ppGo" title="Steer here with your GPS">Go to</button><button class="ppbt">Best times here</button><button class="ppwx">Weather forecast</button></div><button class="ppMatch">Find this water again</button><div class="ppBtOut"></div><div class="ppWxOut"></div>`;
   const pop = L.popup(POP_OPTS()).setLatLng(latlng).setContent(el);
   const rowEls = ([k, v, info]) => {
     const tr = document.createElement('tr'); tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
@@ -3770,6 +3873,7 @@ function openReading(latlng, title, pick) {
   const bb = el.querySelector('.ppbt');
   bb.onclick = () => { bb.remove(); mountBestTimes(el.querySelector('.ppBtOut'), lat, lng); setTimeout(() => pop.update(), 600); setTimeout(() => pop.update(), 2500); };
   el.querySelector('.ppMatch').onclick = () => matchHere(lat, lng);
+  el.querySelector('.ppGo').onclick = () => { const n = (el.querySelector('.ppName').value || '').trim() || (title ? String(title).replace(/<[^>]+>/g, '') : 'Spot'); map.closePopup(pop); startNav([{ lat, lon: lng, name: n }], n); };
   el.querySelector('.ppSave').onclick = () => {
     const name = (el.querySelector('.ppName').value || '').trim() || `Spot ${S.wpts.length + 1}`;
     const sst = sample(S.data.sst, lat, lng), z = sample(S.data.bathy, lat, lng), [ta, tb] = tds(lat, lng);
@@ -3780,44 +3884,206 @@ function openReading(latlng, title, pick) {
   };
   pop.openOn(map);
 }
-// ---------- Measure: tap points to get leg + total distance (nm) and bearings ----------
-const MEAS = { on: false, pts: [], layer: L.layerGroup().addTo(map) };
+// ---------- Route: tap points to plan a run (legs, bearings, time, fuel), drag them to adjust, save it, then Go ----------
+const BOAT = { kts: 25, gph: 0, ...store.get('boat', {}) };
+const MEAS = { on: false, pts: [], layer: L.layerGroup().addTo(map), legs: L.layerGroup().addTo(map), name: '', id: null };
 const MeasureCtl = L.Control.extend({
   options: { position: 'topright' },
   onAdd() {
     const b = L.DomUtil.create('button', 'locate-btn measure-btn');
-    b.title = 'Measure distance'; b.setAttribute('aria-label', 'Measure distance'); b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17 17 3l4 4L7 21z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2" stroke="currentColor" stroke-width="1.6"/></svg>';
+    b.title = 'Plan a route / measure distance'; b.setAttribute('aria-label', 'Plan a route or measure distance'); b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17 17 3l4 4L7 21z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2" stroke="currentColor" stroke-width="1.6"/></svg>';
     L.DomEvent.disableClickPropagation(b);
     b.onclick = () => { MEAS.on = !MEAS.on; if (!MEAS.on) clearMeasure(); b.classList.toggle('on', MEAS.on); $('measureBar').hidden = !MEAS.on; drawMeasure(); };
     MEAS.btn = b; return b;
   },
 });
 new MeasureCtl().addTo(map);
-function clearMeasure() { MEAS.pts = []; MEAS.layer.clearLayers(); drawMeasure(); }
+function clearMeasure() { MEAS.pts = []; MEAS.name = ''; MEAS.id = null; MEAS.layer.clearLayers(); MEAS.legs.clearLayers(); drawMeasure(); }
+const hm = (h) => { const m = Math.round(h * 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`; };
+const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const routeLen = (p) => { let t = 0; for (let i = 1; i < p.length; i++) t += rangeBearing(p[i - 1], p[i])[0]; return t; };
+const runTxtFor = (nm) => `${hm(nm / BOAT.kts)} at ${BOAT.kts} kt${BOAT.gph ? ` · ~${Math.round(nm / BOAT.kts * BOAT.gph)} gal` : ''}`;
 function drawMeasure() {
   MEAS.layer.clearLayers();
-  const p = MEAS.pts; let total = 0;
-  if (p.length > 1) L.polyline(p, { color: '#000', weight: 5, opacity: 0.7, interactive: false }).addTo(MEAS.layer);
-  if (p.length > 1) L.polyline(p, { color: '#ffd23f', weight: 2.5, dashArray: '8 6', interactive: false }).addTo(MEAS.layer);
-  p.forEach((pt, i) => {
-    L.circleMarker(pt, { radius: 5, color: '#000', weight: 2, fillColor: '#ffd23f', fillOpacity: 1, interactive: false }).addTo(MEAS.layer);
-    if (i) {
-      const [d, b] = rangeBearing(p[i - 1], pt); total += d;
-      const mid = [(p[i - 1][0] + pt[0]) / 2, (p[i - 1][1] + pt[1]) / 2];
-      L.marker(mid, { interactive: false, icon: L.divIcon({ className: '', html: `<div class="meas-lbl">${d.toFixed(1)} nm · ${Math.round(b)}°T</div>`, iconSize: [0, 0] }) }).addTo(MEAS.layer);
-    }
+  MEAS.pts.forEach((pt, i) => {
+    const m = L.marker(pt, { draggable: true, title: pt[2] || `Point ${i + 1}`, icon: L.divIcon({ className: '', html: `<div class="rt-pt">${i + 1}</div>`, iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(MEAS.layer);
+    m.on('drag', (e) => { const ll = e.target.getLatLng(); MEAS.pts[i] = [ll.lat, ll.lng]; drawLegs(); });
+    m.on('dragend', () => drawMeasure());
   });
-  const kts = 25;   // typical cruise; the run time is just a guide
-  $('measureTxt').innerHTML = !p.length ? 'Tap the chart to drop points' : p.length === 1 ? 'Tap another point'
-    : `<b>${total.toFixed(1)} nm</b> total · ${p.length - 1} leg${p.length > 2 ? 's' : ''} · ~${(total / kts).toFixed(1)} h at ${kts} kt`;
+  drawLegs();
 }
+function drawLegs() {
+  MEAS.legs.clearLayers();
+  const p = MEAS.pts, ll = p.map((x) => [x[0], x[1]]);
+  if (p.length > 1) {
+    L.polyline(ll, { color: '#000', weight: 5, opacity: 0.7, interactive: false }).addTo(MEAS.legs);
+    L.polyline(ll, { color: '#ffd23f', weight: 2.5, dashArray: '8 6', interactive: false }).addTo(MEAS.legs);
+  }
+  for (let i = 1; i < p.length; i++) {
+    const [d, b] = rangeBearing(p[i - 1], p[i]), mid = [(p[i - 1][0] + p[i][0]) / 2, (p[i - 1][1] + p[i][1]) / 2];
+    L.marker(mid, { interactive: false, icon: L.divIcon({ className: '', html: `<div class="meas-lbl">${d.toFixed(1)} nm · ${Math.round(b)}°T</div>`, iconSize: [0, 0] }) }).addTo(MEAS.legs);
+  }
+  const total = routeLen(p);
+  $('measureTxt').innerHTML = !p.length ? 'Tap the chart to drop points (they snap to your spots and ports)' : p.length === 1 ? 'Tap the next point'
+    : `<b>${total.toFixed(1)} nm</b> · ${p.length - 1} leg${p.length > 2 ? 's' : ''} · ${runTxtFor(total)} · there by ${clock(Date.now() + total / BOAT.kts * 3600e3)} if you leave now`;
+  $('rtGo').disabled = !p.length; $('rtSave').disabled = p.length < 2; $('measureUndo').disabled = !p.length;
+}
+// a tap near one of your spots or a port snaps to it and takes its name
+function routeTap(latlng) {
+  const at = map.latLngToContainerPoint(latlng), near = (la, lo) => at.distanceTo(map.latLngToContainerPoint([la, lo])) < 16;
+  const w = S.wpts.find((x) => near(x.lat, x.lon)), pt = w ? [w.lat, w.lon, w.name] : (() => { const q = PORTS.find((x) => near(x[1], x[2])); return q ? [q[1], q[2], q[0]] : [latlng.lat, latlng.lng]; })();
+  MEAS.pts.push(pt); drawMeasure();
+}
+function openRoute(r) {
+  MEAS.on = true; MEAS.btn.classList.add('on'); $('measureBar').hidden = false;
+  MEAS.pts = r.pts.map((x) => x.slice()); MEAS.name = r.name; MEAS.id = r.id; drawMeasure();
+  if (MEAS.pts.length) map.fitBounds(L.latLngBounds(MEAS.pts.map((x) => [x[0], x[1]])).pad(0.2));
+}
+$('rtKts').value = BOAT.kts; $('rtGph').value = BOAT.gph || '';
+$('rtKts').onchange = () => { BOAT.kts = clamp(+$('rtKts').value || 25, 3, 80); $('rtKts').value = BOAT.kts; store.set('boat', BOAT); drawLegs(); drawRoutes(); navUpdate(); };
+$('rtGph').onchange = () => { BOAT.gph = clamp(+$('rtGph').value || 0, 0, 400); store.set('boat', BOAT); drawLegs(); drawRoutes(); };
+$('rtHome').onclick = () => {
+  const h = portRow(S.home); if (!h) return;
+  if (!(MEAS.pts[0] && MEAS.pts[0][2] === h[0])) MEAS.pts.unshift([h[1], h[2], h[0]]);
+  drawMeasure();
+};
 $('measureUndo').onclick = () => { MEAS.pts.pop(); drawMeasure(); };
 $('measureClear').onclick = () => clearMeasure();
 $('measureDone').onclick = () => { MEAS.on = false; clearMeasure(); MEAS.btn.classList.remove('on'); $('measureBar').hidden = true; };
+$('rtSave').onclick = () => {
+  const last = MEAS.pts[MEAS.pts.length - 1], def = MEAS.name || `${MEAS.pts[0][2] || 'Route'} to ${last[2] || `point ${MEAS.pts.length}`}`;
+  const name = (prompt('Name this route', def) || '').trim(); if (!name) return;
+  const r = { id: MEAS.id || newId(), name: name.slice(0, 80), pts: MEAS.pts.map((x) => [+x[0].toFixed(5), +x[1].toFixed(5), ...(x[2] ? [String(x[2]).slice(0, 60)] : [])]), t: new Date().toISOString() };
+  const i = ROUTES.findIndex((x) => x.id === r.id); if (i >= 0) ROUTES[i] = r; else ROUTES.unshift(r);
+  MEAS.id = r.id; MEAS.name = r.name; saveRoutes(); status(`Saved route "${r.name}" (Spots > Routes).`); setTimeout(() => status(''), 4000);
+};
+$('rtGo').onclick = () => {
+  const pts = MEAS.pts.map((x, i) => ({ lat: x[0], lon: x[1], name: x[2] || `Point ${i + 1}` })), name = MEAS.name || 'Route';
+  $('measureDone').click(); startNav(pts, name);
+};
+
+// Saved routes (Spots drawer)
+const ROUTES = store.get('routes', []);
+function saveRoutes() { store.set('routes', ROUTES); drawRoutes(); }
+function drawRoutes() {
+  $('rCount').textContent = ROUTES.length ? `(${ROUTES.length})` : '';
+  $('rList').innerHTML = ROUTES.map((r, i) => { const d = routeLen(r.pts); return `<li data-i="${i}"><b>${hesc(r.name)}</b><small>${d.toFixed(1)} nm · ${r.pts.length} points · ${runTxtFor(d)}</small>
+    <span class="r-btns"><button data-a="go">Go</button><button data-a="edit" class="ghost">Show / edit</button><button data-a="gpx" class="ghost">GPX</button><button data-a="del" class="ghost" title="Delete">&times;</button></span></li>`; }).join('')
+    || '<p class="hint">None yet. Plan one with the ruler button on the map, then Save.</p>';
+}
+$('rList').onclick = (e) => {
+  const b = e.target.closest('button[data-a]'); if (!b) return;
+  const i = +b.closest('li').dataset.i, r = ROUTES[i]; if (!r) return;
+  const closeDrawer = () => { $('wpts').hidden = true; $('btnWpts').classList.remove('open'); };
+  if (b.dataset.a === 'go') { closeDrawer(); startNav(r.pts.map((x, k) => ({ lat: x[0], lon: x[1], name: x[2] || `Point ${k + 1}` })), r.name); }
+  if (b.dataset.a === 'edit') { closeDrawer(); openRoute(r); }
+  if (b.dataset.a === 'del' && confirm(`Delete the route "${r.name}"?`)) { ROUTES.splice(i, 1); saveRoutes(); }
+  if (b.dataset.a === 'gpx') {
+    const x = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Breakline" xmlns="http://www.topografix.com/GPX/1/1">\n<rte><name>${x(r.name)}</name>\n${r.pts.map((p, k) => `  <rtept lat="${p[0]}" lon="${p[1]}"><name>${x(p[2] || `WP${k + 1}`)}</name></rtept>`).join('\n')}\n</rte>\n</gpx>\n`;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
+    a.download = `${r.name.replace(/[^\w-]+/g, '-').slice(0, 40) || 'route'}.gpx`; a.click();
+  }
+};
+drawRoutes();
+
+// ---------- Navigate: steer to a spot, or run a route leg by leg, from your GPS ----------
+const NAV = { on: false, pts: [], i: 0, from: null, name: '', armed: false, layer: L.layerGroup().addTo(map), lock: null };
+function startNav(pts, name) {
+  if (!pts.length) return;
+  Object.assign(NAV, { on: true, pts, name, i: pts.length > 1 ? 1 : 0, from: pts.length > 1 ? [pts[0].lat, pts[0].lon] : (ME.pos ? ME.pos.slice() : null), armed: false });
+  // a route that starts where you already are skips ahead; one that starts somewhere else steers you to its start first
+  if (pts.length > 1 && ME.pos && rangeBearing(ME.pos, [pts[0].lat, pts[0].lon])[0] > 1) { NAV.i = 0; NAV.from = ME.pos.slice(); }
+  map.closePopup();
+  document.body.classList.add('navigating'); $('navPanel').hidden = false;
+  if (ME.watch == null) { startLocate(); } else { ME.follow = true; }
+  paintLocate(); navLock(); navUpdate();
+  const ll = pts.map((p) => [p.lat, p.lon]).concat(ME.pos ? [ME.pos] : []);
+  if (ll.length > 1) map.fitBounds(L.latLngBounds(ll).pad(0.15)); else map.setView(ll[0], Math.max(map.getZoom(), 10));
+}
+function stopNav() {
+  NAV.on = false; NAV.layer.clearLayers(); $('navPanel').hidden = true; document.body.classList.remove('navigating');
+  if (NAV.lock) { NAV.lock.release().catch(() => {}); NAV.lock = null; }
+}
+async function navLock() {
+  try { if ('wakeLock' in navigator && NAV.on && !NAV.lock) { NAV.lock = await navigator.wakeLock.request('screen'); NAV.lock.addEventListener('release', () => { NAV.lock = null; }); } } catch (e) { /* not allowed right now */ }
+}
+document.addEventListener('visibilitychange', () => { if (NAV.on && document.visibilityState === 'visible') navLock(); });
+// cross-track: how far off the line from the leg start to the mark you are (+ = right of it), nm
+function xte(a, b, p) {
+  const R = 3440.065, [d13, b13] = rangeBearing(a, p), b12 = rangeBearing(a, b)[1];
+  return Math.asin(Math.sin(d13 / R) * Math.sin((b13 - b12) * Math.PI / 180)) * R;
+}
+function navGoto(i) {
+  NAV.i = clamp(i, 0, NAV.pts.length - 1); NAV.armed = false;
+  NAV.from = NAV.i > 0 ? [NAV.pts[NAV.i - 1].lat, NAV.pts[NAV.i - 1].lon] : (ME.pos ? ME.pos.slice() : null);
+  navUpdate();
+}
+function navUpdate() {
+  if (!NAV.on) return;
+  const t = NAV.pts[NAV.i], tp = [t.lat, t.lon], me = ME.pos, multi = NAV.pts.length > 1;
+  if (me && !NAV.from) NAV.from = me.slice();
+  const [dtw, brg] = me ? rangeBearing(me, tp) : [NaN, NaN];
+  // arrival: within 0.1 nm, once you've been more than 0.2 nm away (so a MOB mark doesn't "arrive" the moment it's dropped)
+  if (me && dtw > 0.2) NAV.armed = true;
+  if (me && NAV.armed && dtw < 0.1) {
+    navigator.vibrate?.([300, 150, 300]);
+    if (NAV.i < NAV.pts.length - 1) { status(`At ${t.name}. Next: ${NAV.pts[NAV.i + 1].name}`); setTimeout(() => status(''), 6000); navGoto(NAV.i + 1); return; }
+    status(`You're at ${t.name}.`); setTimeout(() => status(''), 8000); stopNav(); return;
+  }
+  NAV.layer.clearLayers();
+  const rest = NAV.pts.slice(NAV.i).map((p) => [p.lat, p.lon]);
+  if (multi) L.polyline(NAV.pts.map((p) => [p.lat, p.lon]), { color: '#e040fb', weight: 2, opacity: 0.35, dashArray: '6 6', interactive: false }).addTo(NAV.layer);
+  if (rest.length > 1) L.polyline(rest, { color: '#e040fb', weight: 2.5, opacity: 0.8, dashArray: '8 6', interactive: false }).addTo(NAV.layer);
+  const leg = me ? [me, tp] : NAV.from ? [NAV.from, tp] : null;
+  if (leg) { L.polyline(leg, { color: '#000', weight: 6, opacity: 0.55, interactive: false }).addTo(NAV.layer); L.polyline(leg, { color: '#e040fb', weight: 3.5, interactive: false }).addTo(NAV.layer); }
+  L.marker(tp, { interactive: false, icon: L.divIcon({ className: '', html: '<div class="nav-tgt"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }) })
+    .bindTooltip(t.name, { permanent: true, direction: 'right', offset: [10, 0], className: 'wpt-label' }).addTo(NAV.layer);
+  // the numbers
+  const sog = ME.speed != null ? ME.speed * 1.94384 : NaN, cog = ME.heading, moving = sog > 1.5 && cog != null;
+  let left = me ? dtw : NaN; for (let k = NAV.i + 1; k < NAV.pts.length; k++) left += rangeBearing([NAV.pts[k - 1].lat, NAV.pts[k - 1].lon], [NAV.pts[k].lat, NAV.pts[k].lon])[0];
+  const v = sog > 2 ? sog : BOAT.kts, eta = (nm) => `${clock(Date.now() + nm / v * 3600e3)}`;
+  $('nvTo').textContent = `${NAV.name && NAV.name !== t.name ? `${NAV.name} · ` : ''}To ${t.name}${multi ? ` (${NAV.i + 1} of ${NAV.pts.length})` : ''}`;
+  $('nvDtw').innerHTML = me ? `${dtw < 10 ? dtw.toFixed(2) : dtw.toFixed(1)}<em>nm</em>` : '&ndash;';
+  $('nvBrg').innerHTML = me ? `${String(Math.round(brg) % 360).padStart(3, '0')}°<em>T</em>` : '&ndash;';
+  $('nvEta').innerHTML = me ? `${eta(dtw)}<em>${hm(dtw / v)}</em>` : '&ndash;';
+  const sub = [];
+  if (!me) sub.push(ME.watch == null ? 'Turn on your location to navigate' : 'Waiting for a GPS fix…');
+  else {
+    if (moving) {
+      const diff = ((brg - cog + 540) % 360) - 180;
+      if (Math.abs(diff) >= 4) sub.push(`<span class="turn">${diff < 0 ? `&#9664; ${Math.round(-diff)}° left` : `${Math.round(diff)}° right &#9654;`}</span>`);
+      else sub.push('<span class="turn">On course</span>');
+    }
+    sub.push(`SOG ${sog === sog ? sog.toFixed(1) : '–'} kt`, `COG ${cog != null && sog > 1 ? `${String(Math.round(cog) % 360).padStart(3, '0')}°T` : '–'}`);
+    if (NAV.from && rangeBearing(NAV.from, tp)[0] > 0.3) { const x = xte(NAV.from, tp, me); if (Math.abs(x) >= 0.05) sub.push(`${Math.abs(x).toFixed(2)} nm ${x > 0 ? 'right' : 'left'} of the line`); }
+    if (multi && NAV.i < NAV.pts.length - 1) sub.push(`Route: ${left.toFixed(1)} nm, done ${eta(left)}`);
+    if (sog !== sog || sog <= 2) sub.push(`times at ${BOAT.kts} kt`);
+  }
+  $('nvSub').innerHTML = sub.join(' · ');
+  $('nvPrev').disabled = NAV.i === 0; $('nvNext').disabled = NAV.i >= NAV.pts.length - 1;
+}
+$('nvClose').onclick = () => stopNav();
+$('nvPrev').onclick = () => navGoto(NAV.i - 1);
+$('nvNext').onclick = () => navGoto(NAV.i + 1);
+$('nvMob').onclick = () => mob();
+function mob() {
+  if (!ME.pos) {
+    status('MOB needs a GPS fix: turn on your location and wait for the arrow.', true);
+    if (ME.watch == null) { startLocate(); paintLocate(); }
+    return;
+  }
+  const t = new Date(), name = `MOB ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  S.wpts.push({ id: newId(), u: Date.now(), name, lat: +ME.pos[0].toFixed(5), lon: +ME.pos[1].toFixed(5), t: t.toISOString(), note: 'Man overboard mark' });
+  saveWpts(); navigator.vibrate?.([500, 200, 500]);
+  startNav([{ lat: ME.pos[0], lon: ME.pos[1], name }], name);
+  map.setView(ME.pos, Math.max(map.getZoom(), 13));
+  status(`${name} marked and saved to your spots. Steering back to it.`);
+}
 
 map.on('click', (e) => {
   if (TRIP.pinning) return;                       // Track my day: this tap places a catch
-  if (MEAS.on) { MEAS.pts.push([e.latlng.lat, e.latlng.lng]); drawMeasure(); return; }
+  if (MEAS.on) { routeTap(e.latlng); return; }
   const pk = pickAt(e.containerPoint); if (pk) { openPick(pk); return; }
   openReading(e.latlng);
 });
@@ -3843,9 +4109,10 @@ function drawWpts() {
     L.marker([w.lat, w.lon], { icon: L.divIcon({ className: '', html: '<div class="wpt-icon"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) })
       .bindTooltip(w.name, { permanent: true, direction: 'right', offset: [8, 0], className: 'wpt-label' }).addTo(wLayer);
     const li = document.createElement('li');
-    li.innerHTML = `<b>${w.name.replace(/</g, '&lt;')}</b><small>${fmtLL(w.lat, w.lon)}<br>TD ${fmtTd(w.lat, w.lon)}${w.sst ? ` · ${w.sst}°F` : ''}${w.fm ? ` · ${w.fm} fm` : ''}${w.note ? `<br><i>${w.note.replace(/</g, '&lt;')}</i>` : ''}</small><button title="Delete">&times;</button>`;
+    li.innerHTML = `<b>${w.name.replace(/</g, '&lt;')}</b><small>${fmtLL(w.lat, w.lon)}<br>TD ${fmtTd(w.lat, w.lon)}${w.sst ? ` · ${w.sst}°F` : ''}${w.fm ? ` · ${w.fm} fm` : ''}${w.note ? `<br><i>${w.note.replace(/</g, '&lt;')}</i>` : ''}</small><button class="wGo" title="Steer here with your GPS">Go</button><button class="wDel" title="Delete">&times;</button>`;
     li.querySelector('b').onclick = () => map.setView([w.lat, w.lon], Math.max(map.getZoom(), 9));
-    li.querySelector('button').onclick = () => { S.wpts.splice(i, 1); saveWpts(); };
+    li.querySelector('.wGo').onclick = () => { $('wpts').hidden = true; $('btnWpts').classList.remove('open'); startNav([{ lat: w.lat, lon: w.lon, name: w.name }], w.name); };
+    li.querySelector('.wDel').onclick = () => { S.wpts.splice(i, 1); saveWpts(); };
     list.appendChild(li);
   });
 }
@@ -3956,6 +4223,9 @@ function applySettings(st) {
     if (Array.isArray(st.fishDepth)) { $('depMin').value = st.fishDepth[0] ?? ''; $('depMax').value = st.fishDepth[1] ?? ''; fire($('depMin')); }
     if (st.species && st.species !== S.species && [...spSel.options].some((o) => o.value === st.species)) { spSel.value = st.species; fire(spSel); }
     if (st.fw && typeof st.fw === 'object') { store.set('fw', st.fw); fwLoad(); fwToUi(); }
+    if (st.zoneHome && typeof st.zoneHome === 'object') { Object.assign(zoneHome, st.zoneHome); store.set('zoneHome', zoneHome); }
+    if (Array.isArray(st.routes)) { ROUTES.splice(0, ROUTES.length, ...st.routes); store.set('routes', ROUTES); drawRoutes(); }
+    if (st.boat && typeof st.boat === 'object') { Object.assign(BOAT, st.boat); store.set('boat', BOAT); $('rtKts').value = BOAT.kts; $('rtGph').value = BOAT.gph || ''; }
   } finally { ACCT.applying = false; }
 }
 const localSettings = () => Object.fromEntries(SYNC_KEYS.map((k) => [k, store.get(k, null)]).filter(([, v]) => v != null));
