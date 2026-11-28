@@ -999,17 +999,20 @@ function drawTdGrid(ctx, size, z) {
 }
 
 // Current at a point: HF radar (hourly, 2-6 km) where it reaches, satellite geostrophic (daily, 25 km) beyond.
-function curAt(lat, lon) {
+// label: also return where the reading came from (only the tap readout needs it; formatting the time is slow)
+function curAt(lat, lon, label) {
   if (S.fc > 0) {     // forecast mode: the ocean model only (radar and satellite can't see the future)
     const f = S.data.curfc; if (!f) return null;
     const u = sample(f, lat, lon, f.u), v = sample(f, lat, lon, f.vv);
     return u === u && v === v ? [u, v, 'model forecast'] : null;
   }
-  for (const [h, lbl] of S.curSrc !== 'sat' ? [] : [[map.getZoom() >= 9 && S.data.hf1, 'HF radar 1 km'], [S.data.hf, 'HF radar 6 km']]) {
-    if (h) { const u = sample(h, lat, lon, h.u), v = sample(h, lat, lon, h.vv); if (u === u && v === v) return [u, v, lbl]; }
+  if (S.curSrc === 'sat') {
+    const h1 = S.data.hf1, h6 = S.data.hf;
+    if (h1 && map.getZoom() >= 9) { const u = sample(h1, lat, lon, h1.u), v = sample(h1, lat, lon, h1.vv); if (u === u && v === v) return [u, v, 'HF radar 1 km']; }
+    if (h6) { const u = sample(h6, lat, lon, h6.u), v = sample(h6, lat, lon, h6.vv); if (u === u && v === v) return [u, v, 'HF radar 6 km']; }
   }
   const b = S.data.curb;
-  if (b) { const u = sample(b, lat, lon, b.u), v = sample(b, lat, lon, b.vv); if (u === u && v === v) return [u, v, b.model ? `${CUR_SRC[b.model]} model ${niceHour(b.time)}` : 'satellite']; }
+  if (b) { const u = sample(b, lat, lon, b.u), v = sample(b, lat, lon, b.vv); if (u === u && v === v) return [u, v, !label ? '' : b.model ? `${CUR_SRC[b.model]} model ${niceHour(b.time)}` : 'satellite']; }
   return null;
 }
 // Arrows on a fixed screen spacing, so detail scales with zoom; length and color by speed
@@ -1919,8 +1922,21 @@ function buildFish() {
   const sst = S.data.sst, sp = tunedSpecies(SPECIES[S.species] || SPECIES.yellowfin, S.species);   // nudged by your logged catches
   if (!sst) return;
   // work on a ~2-3 km grid over the SST window
-  const f = Math.max(1, Math.round(0.025 / sst.dlat));
-  const g = { nx: Math.floor(sst.nx / f), ny: Math.floor(sst.ny / f), lat0: sst.lat0, lon0: sst.lon0, dlat: sst.dlat * f, dlon: sst.dlon * f };
+  const f = Math.max(1, Math.round(0.025 / Math.abs(sst.dlat)));
+  let g = { nx: Math.floor(sst.nx / f), ny: Math.floor(sst.ny / f), lat0: sst.lat0, lon0: sst.lon0, dlat: sst.dlat * f, dlon: sst.dlon * f };
+  // only score what can matter: the view (plus a margin for panning) and everything inside your run from the home port.
+  // A saved temp chart can span the whole coast (500k+ cells), which took many seconds on a phone for nothing.
+  {
+    const vb = map.getBounds().pad(0.5), hp = PORTS.find((x) => x[0] === S.home);
+    let bs = vb.getSouth(), bn = vb.getNorth(), bw = vb.getWest(), be = vb.getEast();
+    const la1 = g.lat0 + (g.ny - 1) * g.dlat, lo1 = g.lon0 + (g.nx - 1) * g.dlon;
+    const onChart = (la, lo) => la >= Math.min(g.lat0, la1) - 2 && la <= Math.max(g.lat0, la1) + 2 && lo >= Math.min(g.lon0, lo1) - 2 && lo <= Math.max(g.lon0, lo1) + 2;
+    if (hp && onChart(hp[1], hp[2])) { const dl = (S.maxRun || 60) / 60 + 0.1, dlo = dl / Math.cos(hp[1] * Math.PI / 180); bs = Math.min(bs, hp[1] - dl); bn = Math.max(bn, hp[1] + dl); bw = Math.min(bw, hp[2] - dlo); be = Math.max(be, hp[2] + dlo); }
+    const ix = (lo) => (lo - g.lon0) / g.dlon, jy = (la) => (la - g.lat0) / g.dlat;
+    const i0 = Math.max(0, Math.floor(Math.min(ix(bw), ix(be)))), i1 = Math.min(g.nx - 1, Math.ceil(Math.max(ix(bw), ix(be))));
+    const j0 = Math.max(0, Math.floor(Math.min(jy(bs), jy(bn)))), j1 = Math.min(g.ny - 1, Math.ceil(Math.max(jy(bs), jy(bn))));
+    if (i1 - i0 >= 4 && j1 - j0 >= 4) g = { ...g, nx: i1 - i0 + 1, ny: j1 - j0 + 1, lat0: g.lat0 + j0 * g.dlat, lon0: g.lon0 + i0 * g.dlon };
+  }
   const n = g.nx * g.ny, T = new Float32Array(n).fill(NaN), Td = new Float32Array(n).fill(NaN), hourly = new Uint8Array(n);
   const dep = new Float32Array(n).fill(NaN), lchl = new Float32Array(n).fill(NaN), cur = new Float32Array(n).fill(NaN);
   // Water temp: the hourly GOES reading (newest clear pixel, last 24 h) where it has one, the daily cloud-free map elsewhere
@@ -2734,7 +2750,7 @@ async function applyForecast() {
   }
 }
 
-let loading = 0;
+let loading = 0, hfCool = 0;
 async function refresh() {
   const my = ++loading, prod0 = S.prod, p = PRODUCTS[prod0];
   status(`Loading ${p.name.toLowerCase()}…`);
@@ -2759,19 +2775,47 @@ async function refresh() {
     else if (p.sst && S.data[S.prod]) buildSstGeo(S.data[S.prod]);
     if (S.prod === 'ftle') add('currents', loadCurrents(6).then((c) => { S.data.cur6 = c; S.data.ftle = computeFtle(c); }));
     const fishy = S.prod === 'fish' || S.prod === 'ana';
+    // Where to fish / Analysis: draw from the saved copies right away, then redo the picks as the sharper or slower
+    // pieces land (NOAA can take 20+ s, and HF radar is often down), instead of waiting on everything before drawing
+    const late = []; let built = false, rebT = 0;
+    const rebuild = () => {
+      if (!built || my !== loading) return; clearTimeout(rebT);
+      rebT = setTimeout(() => {
+        if (my !== loading || !(S.prod === 'fish' || S.prod === 'ana')) return;
+        buildFish();
+        if (S.prod === 'ana') { if (S.data.ssh) buildRings(S.data.ssh); buildAnalysis(); renderAnalysis(); } else showFishTimes();
+        autoRange(true); renderRaster(); drawLegend(); chart.draw(); updateDate();
+      }, 300);
+    };
+    const soft = (pr) => (fishy ? late.push(pr.then(rebuild, () => {})) : jobs.push(pr));
+    const fast = (key, live, quick) => (!fishy ? live.then((g) => { S.data[key] = g; }) : new Promise((res, rej) => {
+      let done = false; const qp = S.date ? Promise.resolve(null) : quick().catch((e) => { console.warn(`${key}: saved copy`, e); return null; });
+      const take = (g) => { if (my !== loading) { done = true; res(); return; } if (!g) return; S.data[key] = g; if (done) rebuild(); else { done = true; res(); } };
+      qp.then((g) => { if (!done) take(g); });
+      live.then(take, (e) => qp.then((g) => { if (!done) { if (g) take(g); else { done = true; rej(e); } } }));
+    }));
+    // the quick copy: this device's sharp copy, else Breakline's ready-made one (never a composite built on the spot)
+    const savedCopy = (prod) => async () => {
+      const h = await sharpGet(prod); if (h) return h.g;
+      await preReady; const z = PRE && preZoneAt(map.getCenter()); if (!z) return null;
+      const g = prod === 'sst' ? await preBlend(z) : prod === 'chl' ? await preChlBest(z) : await preForView(prod, true);
+      return g && { ...g, win: { ...PRE_BOX[z], pre: true, stride: 1 } };
+    };
     const needSsh = (S.ov.rings && ['ssh', 'sst', 'goes', 'ftle', 'cur', 'sss'].includes(S.prod)) || fishy;
-    if (needSsh && S.prod !== 'ssh' && !covers(S.data.ssh, 0.25, 999)) add('eddy rings', loadGrid('ssh').then((g) => { S.data.ssh = g; }));
+    if (needSsh && S.prod !== 'ssh' && !covers(S.data.ssh, 0.25, 999)) add('eddy rings', fast('ssh', loadGrid('ssh'), savedCopy('ssh')));
     const needCur = S.ov.cur || S.prod === 'cur' || fishy;
     if (fishy && !S.date && !covers(S.data.goes, PRODUCTS.goes.res, PRODUCTS.goes.cells)) jobs.push(loadGrid('goes').then((g) => { S.data.goes = g; }).catch((e) => console.warn('hourly SST for fish', e)));
-    if (needCur && (!covers(S.data.curb, 0.25, 999) || (S.data.curb.model || 'sat') !== (S.date ? 'sat' : S.curSrc))) add('currents', loadCurrents(1).then((c) => { S.data.curb = c; }));
-    if (needCur && !covers(S.data.hf, 0.055, 320)) jobs.push(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; }));
-    if (needCur && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) jobs.push(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; }));
+    if (needCur && (!covers(S.data.curb, 0.25, 999) || (S.data.curb.model || 'sat') !== (S.date ? 'sat' : S.curSrc))) add('currents', fast('curb', loadCurrents(1), () => (S.curSrc !== 'sat' ? preModelCurrents(S.curSrc) : preCurrents())));
+    // HF radar: after a failure, leave it alone for 5 min instead of waiting on the dead server again on every pan
+    if (needCur && Date.now() > hfCool && !covers(S.data.hf, 0.055, 320)) soft(loadHF(false).then((h) => { S.data.hf = h; }).catch((e) => { console.warn('HF radar', e); S.data.hf = null; hfCool = Date.now() + 5 * 60e3; }));
+    if (needCur && Date.now() > hfCool && map.getZoom() >= 9 && !covers(S.data.hf1, 0.009, 320)) soft(loadHF(true).then((h) => { S.data.hf1 = h; }).catch((e) => { console.warn('HF radar 1 km', e); S.data.hf1 = null; hfCool = Date.now() + 5 * 60e3; }));
     if (S.prod === 'wx') add('weather', loadWx().then(() => buildWx()));
     if (fishy) {
-      if (!covers(S.data.sst, PRODUCTS.sst.res, PRODUCTS.sst.cells) || S.data.sst?.src !== S.src.sst) add('water temp', loadGrid('sst').then((g) => { S.data.sst = g; }));
-      if (!covers(S.data.chl, PRODUCTS.chl.res, PRODUCTS.chl.cells) || S.data.chl?.src !== S.src.chl) jobs.push(loadGrid('chl').then((g) => { S.data.chl = g; }).catch(() => {}));
+      if (!covers(S.data.sst, PRODUCTS.sst.res, PRODUCTS.sst.cells) || S.data.sst?.src !== S.src.sst) add('water temp', fast('sst', loadGrid('sst'), savedCopy('sst')));
+      if (!covers(S.data.chl, PRODUCTS.chl.res, PRODUCTS.chl.cells) || S.data.chl?.src !== S.src.chl) jobs.push(fast('chl', loadGrid('chl'), savedCopy('chl')).catch(() => {}));
     } else if (S.prod !== 'sst' && !S.data.sst) jobs.push(loadGrid('sst').then((g) => { S.data.sst = g; }).catch(() => {}));
     const res = await Promise.allSettled(jobs);
+    if (late.length) await Promise.race([Promise.allSettled(late), new Promise((z) => setTimeout(z, 2500))]);
     if (my !== loading) return;
     let fail = res.find((r) => r.status === 'rejected');
     try { await applyForecast(); } catch (e) { console.error('forecast', e); fail = { reason: new Error(`forecast: ${e.message}`) }; }
@@ -2784,6 +2828,7 @@ async function refresh() {
     if (S.prod === 'fish') showFishTimes();
     if (needSsh && S.data.ssh && S.prod !== 'fish') buildRings(S.data.ssh); else S.geo.rings = [];
     if (S.prod === 'ana') renderAnalysis();
+    built = true;
     autoRange(); renderRaster(); renderRelief(); drawLegend(); chart.draw(); updateDate();
     const gg = S.data[S.prod];
     if (fail) status(`Some data didn't load (${fail.reason.message}).`, true);
@@ -3483,7 +3528,7 @@ function readings(lat, lon) {
   add('Oxygen', D.o2, PRODUCTS.o2.fmt, (v) => INFO.o2(v));
   add('Hot-spot score', D.fish, PRODUCTS.fish.fmt, (v) => INFO.score(v));
   const z = depthAt(lat, lon); if (z === z) r.push(['Depth', z >= 0 ? 'land' : depthTxt(z)]);
-  const c = curAt(lat, lon);
+  const c = curAt(lat, lon, true);
   if (c) { const kt = Math.hypot(c[0], c[1]) * 1.94384; r.push(['Current', `${kt.toFixed(2)} kt toward ${Math.round((Math.atan2(c[0], c[1]) * 180 / Math.PI + 360) % 360)}° (${c[2]})`, INFO.cur(kt)]); }
   for (const [d, b, sp] of spotsNear(lat, lon)) {
     r.push([sp[3] === 'reef' ? 'Reef' : INSHORE_KINDS.has(sp[3]) ? sp[3][0].toUpperCase() + sp[3].slice(1) : 'Spot', `${sp[2]}${sp[6] ? ` · ${sp[6]}` : ''} · ${d.toFixed(2)} nm @ ${Math.round(b)}°T <small>(${sp[4]})</small>`, INFO.spot(sp[3])]);
